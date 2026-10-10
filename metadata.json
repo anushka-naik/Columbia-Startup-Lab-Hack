@@ -1,0 +1,10 @@
+{
+  "name": "Remix Remix CHRP Off-Grid Mesh Messenger",
+  "description": "Ultra-low-bandwidth off-grid voice, image, and text messaging simulator over a simulated 230-byte LoRa mesh network.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
