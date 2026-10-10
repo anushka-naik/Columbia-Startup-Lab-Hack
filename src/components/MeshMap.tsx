@@ -162,24 +162,17 @@ export const MeshMap: React.FC<MeshMapProps> = ({
 
           return (
             <g key={pkt.packetId}>
-              {/* Animated radio pulse circle along the vector */}
               <circle
-                r="6"
-                fill="#66aaff"
-                className="animate-ping"
-                style={{
-                  cx: (fromNode.x + toNode.x) / 2,
-                  cy: (fromNode.y + toNode.y) / 2,
-                }}
-              />
-              <circle
-                cx={(fromNode.x + toNode.x) / 2}
-                cy={(fromNode.y + toNode.y) / 2}
+                cx={fromNode.x}
+                cy={fromNode.y}
                 r="4"
                 fill="#0071e3"
                 stroke="#ffffff"
                 strokeWidth="1.5"
-              />
+              >
+                <animate attributeName="cx" from={fromNode.x} to={toNode.x} dur={`${pkt.playbackDurationMs ?? 800}ms`} fill="freeze" />
+                <animate attributeName="cy" from={fromNode.y} to={toNode.y} dur={`${pkt.playbackDurationMs ?? 800}ms`} fill="freeze" />
+              </circle>
             </g>
           );
         })}

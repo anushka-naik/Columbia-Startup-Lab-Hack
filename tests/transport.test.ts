@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { decodeOpusForPlayback } from '../src/utils/audioPlayback';
 import { CHUNK_BYTES, MTU, Receiver, crc16, packetize, parityFrame, serialize, parse, seededRandom } from '../src/utils/protocol';
 import { runTransfer, TransportOptions } from '../src/utils/transport';
 import { INITIAL_NODES, INITIAL_LINKS, findRoutePath } from '../src/utils/meshEngine';
@@ -9,6 +10,27 @@ import { encodeText, decodeMedia, encodePixelLayers, decodePixelLayers, wrapMedi
 const payload = Uint8Array.from({ length: 905 }, (_, i) => (i * 13) % 256);
 const network = () => ({ nodes: INITIAL_NODES, links: INITIAL_LINKS });
 const options = (overrides: Partial<TransportOptions> = {}): TransportOptions => ({ payload, transfer: 1, source: 'node-alpha-01', target: 'node-echo-05', network, radio: RADIO_PRESETS.medium_fast, lossPct: 20, speed: 5, fec: true, random: seededRandom(42), wait: async () => {}, ...overrides });
+
+test('verified received Opus speech becomes playable PCM WAV without changing mesh bytes', async () => {
+  const ogg = new Uint8Array(readFileSync(new URL('../public/audio/ridge.ogg', import.meta.url)));
+  const media = wrapMedia('voice', ogg, 140944, 4.4045, 'audio/ogg');
+  const transfer = await runTransfer(options({ payload: media.bytes }));
+  assert.equal(transfer.delivered, true);
+  const received = decodeMedia(transfer.receiver.output!).data;
+  const wav = await decodeOpusForPlayback(received);
+  const view = new DataView(wav.buffer);
+  assert.equal(new TextDecoder().decode(wav.slice(0, 4)), 'RIFF');
+  assert.equal(new TextDecoder().decode(wav.slice(8, 12)), 'WAVE');
+  assert.equal(view.getUint16(20, true), 1);
+  assert.equal(view.getUint16(22, true), 1);
+  assert.equal(view.getUint32(24, true), 48000);
+  const duration = view.getUint32(40, true) / view.getUint32(28, true);
+  assert.ok(duration > 4.3 && duration < 4.5);
+  assert.ok(wav.slice(44).some(byte => byte !== 0), 'decoded speech contains sound');
+  assert.deepEqual(received, ogg);
+  assert.equal(media.bytes.length, 3680);
+  await assert.rejects(decodeOpusForPlayback(new Uint8Array([0, 1, 2])), /Invalid Ogg/);
+});
 
 test('UTF-8 text is chunked within the 230-byte wire budget and reassembled out of order', () => {
   const text = 'Hello 🌎 你好 '.repeat(150), media = encodeText(text);

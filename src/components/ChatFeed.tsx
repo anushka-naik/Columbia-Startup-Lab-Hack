@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { ReceivedAudioPlayer } from './ReceivedAudioPlayer';
 import { MeshMessage, MeshNode } from '../types/mesh';
 import { CheckCheck, Clock, Route, AlertTriangle, Radio } from 'lucide-react';
 export function ChatFeed({ messages, onOpenRouteInspector }: { messages: MeshMessage[]; nodes: MeshNode[]; onOpenRouteInspector: (m: MeshMessage) => void }) {
-  const [audioError, setAudioError] = useState('');
   return <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5 bg-white scroll-smooth">
     <p className="text-center text-[11px] text-zinc-500">Receiver view · only arrived bytes appear here</p>
     {!messages.length && <div className="py-10 px-4 text-center"><Radio className="w-8 h-8 text-blue-500 mx-auto mb-3" /><h2 className="text-sm font-semibold">A fresh connection.</h2><p className="text-xs leading-relaxed text-zinc-500 mt-2">Send a note, record your voice, or share a photo. Watch it find its way to base camp.</p></div>}
@@ -16,9 +16,8 @@ export function ChatFeed({ messages, onOpenRouteInspector }: { messages: MeshMes
           <div className="text-[11px] font-medium text-zinc-700">{msg.type === 'text' ? 'Message' : msg.type === 'voice' ? 'Voice note' : msg.type === 'video_burst' ? 'Video keyframes' : 'Photo'} <span className="text-zinc-400">· {msg.compressedBytes.toLocaleString()} B</span></div>
           {msg.type === 'text' && <p className="text-sm leading-relaxed break-words">{msg.receivedText ?? 'Waiting for all text chunks…'}</p>}
           {msg.type === 'voice' && <div className="space-y-2">
-            {msg.receivedAudioUrl ? <audio controls preload="metadata" src={msg.receivedAudioUrl} className="w-full h-10" onError={() => setAudioError('This browser cannot play the received codec. Download the verified audio below.')} /> : <div className="py-4 text-xs text-zinc-500 text-center">Audio unlocks after reassembly and checksum verification.</div>}
+            {msg.receivedAudioUrl ? <ReceivedAudioPlayer source={msg.receivedAudioUrl} /> : <div className="py-4 text-xs text-zinc-500 text-center">Audio unlocks after reassembly and checksum verification.</div>}
             <p className="text-[10px] text-zinc-500">{msg.audioData?.durationSec.toFixed(1)} sec · {msg.codecLabel}</p>
-            {audioError && msg.receivedAudioUrl && <p className="text-xs text-rose-600">{audioError} <a href={msg.receivedAudioUrl} download="received-voice" className="underline">Download</a></p>}
           </div>}
           {msg.type === 'image' && <div className="space-y-2">
             <div className="h-36 rounded-xl overflow-hidden bg-zinc-100 flex items-center justify-center">

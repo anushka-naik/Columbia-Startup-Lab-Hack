@@ -2,7 +2,7 @@
 
 **Opening:** “LoRa makes every byte expensive. We choose a representation that fits: Opus speech, small progressive photos, and a three-frame video storyboard.”
 
-**Press Run live demo:** “These are real encoded bytes. Every frame is at most 230 bytes, including our header. We’re crossing three hops with 20% independent loss at each hop. Playback is accelerated 5×; the airtime counter still shows unaccelerated radio time.”
+**Press Run live demo:** “These are real encoded bytes. Every frame is at most 230 bytes, including our header. We’re crossing three hops with 20% independent loss at each hop. Playback runs at 0.5× so each hop is visible; the airtime counter still shows unaccelerated radio time.”
 
 **Open Journey:** “Compressed size alone is misleading. We count every hop attempt, including dropped frames, parity, retries and return receipts. The receiver reassembles and CRC-checks the message. The sender waits for the receipt to get back before saying delivered.”
 

@@ -185,8 +185,8 @@ export const NetworkControls: React.FC<NetworkControlsProps> = ({
             <span className="tabular-nums font-semibold text-blue-600">{simSpeedMultiplier}x Realtime</span>
           </div>
 
-          <div className="grid grid-cols-4 gap-1.5">
-            {[1, 2, 5, 10].map((spd) => (
+          <div className="grid grid-cols-5 gap-1.5">
+            {[0.5, 1, 2, 5, 10].map((spd) => (
               <button
                 key={spd}
                 aria-pressed={simSpeedMultiplier === spd}

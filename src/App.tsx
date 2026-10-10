@@ -21,7 +21,7 @@ export default function App() {
   const [nodes, setNodes] = useState<MeshNode[]>(INITIAL_NODES);
   const [radioConfig, setRadioConfig] = useState<RadioConfig>(RADIO_PRESETS.medium_fast);
   const [packetLossPct, setPacketLossPct] = useState(20);
-  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState(5);
+  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState(0.5);
   const [messages, setMessages] = useState<MeshMessage[]>([]);
   const [activePackets, setActivePackets] = useState<LoRaPacket[]>([]);
   const [eventLogs, setEventLogs] = useState<string[]>(['Ready. Receiver starts empty; every preview comes from received bytes.']);
@@ -85,7 +85,7 @@ export default function App() {
             sourceNodeId: e.route[0], targetNodeId: e.route.at(-1)!, currentHopNodeId: e.from!, nextHopNodeId: e.to!,
             hopIndex: e.hop!, totalHops: e.route.length - 1, payloadBytes: f.body.length + 18,
             dataHexSnippet: '', crc16: hexCrc(f.checksum), crcValid: true, state: 'transmitting', routeHistory: e.route,
-            sentAt: Date.now(), retryCount: e.stats.retries,
+            sentAt: Date.now(), retryCount: e.stats.retries, playbackDurationMs: calculatePacketAirtimeMs(f.body.length + 18, settings.radio) / settings.speed,
           }]);
         } else if (e.kind === 'receive' || e.kind === 'drop' || e.kind === 'ack') setActivePackets([]);
         const decoded = e.receiver.output ? decodeMedia(e.receiver.output) : undefined;
@@ -149,7 +149,7 @@ export default function App() {
     if (controller.current || demoRunning.current) return;
     demoRunning.current = true;
     const generation = ++demoGeneration.current;
-    const settings = { radio: scenario === 'extreme_slow' ? RADIO_PRESETS.extreme_slow : RADIO_PRESETS.medium_fast, loss: 20, speed: scenario === 'extreme_slow' ? 10 : 5 };
+    const settings = { radio: scenario === 'extreme_slow' ? RADIO_PRESETS.extreme_slow : RADIO_PRESETS.medium_fast, loss: 20, speed: scenario === 'extreme_slow' ? 10 : 0.5 };
     setRadioConfig(settings.radio); setPacketLossPct(20); setSimSpeedMultiplier(settings.speed);
     try {
       if (scenario === 'extreme_slow') await send({ type: 'text', text: 'Base camp, we are safe at the ridge.', useFec: true }, settings, 42);

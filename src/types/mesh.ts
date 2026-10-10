@@ -102,6 +102,7 @@ export interface LoRaPacket {
   state: PacketState;
   routeHistory: string[]; // Node IDs visited
   sentAt: number;
+  playbackDurationMs?: number;
   deliveredAt?: number;
   retryCount: number;
   // Raw payload chunk for reassembly

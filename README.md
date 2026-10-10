@@ -12,7 +12,7 @@ npm run build
 
 ## Run the judging demo
 
-1. Click **Reset**, then **Run live demo**. It sends real spoken audio and a photo sequentially, with 20% independent loss at every hop, XOR recovery enabled, and 5× playback. Seeds 42 and 73 make the packet losses repeatable on the default topology.
+1. Click **Reset**, then **Run live demo**. It sends real spoken audio and a photo sequentially, with 20% independent loss at every hop, XOR recovery enabled, and 0.5× playback for easier hop-by-hop viewing. Seeds 42 and 73 make the packet losses repeatable on the default topology.
 2. Watch the receiver buffer. Audio only unlocks after full reassembly and CRC verification. Images appear only when a complete pixel layer has arrived.
 3. Open **Journey**. Show the encoded size, all-hop byte cost, airtime, retries, missing chunks, receiver checksum, and sender receipt separately.
 4. Select **ECHO-05** on the map and turn it offline. Send another message. It must stay unconfirmed. Turn it online to send again. Disconnects are never replaced by fabricated routes.
