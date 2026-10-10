@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ChrpPouchHardware } from './ChrpPouchHardware';
 import { RadioConfig } from '../types/mesh';
-import { Radio, Battery, WifiOff, FlipHorizontal, Signal } from 'lucide-react';
+import { Battery, FlipHorizontal, Signal, Radio } from 'lucide-react';
 
 interface PhoneContainerProps {
   children: React.ReactNode;
@@ -12,95 +12,33 @@ interface PhoneContainerProps {
   senderCallsign: string;
 }
 
-export const PhoneContainer: React.FC<PhoneContainerProps> = ({
-  children,
-  radioConfig,
-  isTransmitting,
-  isReceiving,
-  activePacketSnippet,
-  senderCallsign,
-}) => {
+export const PhoneContainer: React.FC<PhoneContainerProps> = ({ children, radioConfig, isTransmitting, isReceiving }) => {
   const [isFlippedToHardware, setIsFlippedToHardware] = useState(false);
-
   return (
-    <div className="relative flex flex-col items-center justify-center p-2 sm:p-4">
-      {/* iPhone Outer Chassis Frame */}
-      <div className="relative w-full max-w-[390px] h-[780px] bg-slate-900 rounded-[50px] p-3 shadow-2xl border-[4px] border-slate-700 shadow-black/80 flex flex-col overflow-hidden">
-        {/* Antenna Stub visualization on top-left of the phone */}
-        <div className="absolute -top-3 left-10 w-4 h-5 bg-gradient-to-t from-slate-700 to-slate-900 rounded-t-sm border-t border-slate-600 flex items-center justify-center">
-          <span className="w-1.5 h-1 bg-amber-400/80 rounded-full" />
-        </div>
-
-        {/* Hardware / Screen Flip Pill Button on frame */}
-        <button
-          onClick={() => setIsFlippedToHardware(!isFlippedToHardware)}
-          title="Flip phone to inspect CHRP Hardware Module"
-          className="absolute top-5 right-7 z-40 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600/80 text-[11px] font-medium shadow-md transition-all active:scale-95"
-        >
-          <FlipHorizontal className="w-3 h-3 text-amber-400" />
-          <span>{isFlippedToHardware ? 'Screen' : 'Pouch'}</span>
-        </button>
-
-        {/* Phone Screen Container */}
-        <div className="relative w-full h-full bg-slate-950 rounded-[40px] overflow-hidden flex flex-col border border-slate-800/80 shadow-inner">
-          {/* iOS Status Bar */}
-          <div className="relative z-30 flex items-center justify-between px-6 pt-3 pb-1 text-xs select-none">
-            {/* Time & Carrier */}
-            <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-white tracking-tight">09:41</span>
-              <div className="flex items-center gap-1 text-[10px] text-amber-400 font-mono ml-2">
-                <WifiOff className="w-3 h-3 text-rose-400" />
-                <span className="text-slate-400">NO CELL</span>
-              </div>
-            </div>
-
-            {/* Dynamic Island / LoRa Activity Bar */}
-            <div className="absolute left-1/2 -translate-x-1/2 top-2 w-28 h-6 bg-black rounded-full border border-slate-800 flex items-center justify-between px-2.5 shadow-md">
-              <div className="flex items-center gap-1">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    isTransmitting
-                      ? 'bg-amber-400 animate-ping'
-                      : isReceiving
-                      ? 'bg-emerald-400 animate-pulse'
-                      : 'bg-slate-600'
-                  }`}
-                />
-                <span className="text-[9px] font-mono font-bold text-slate-300">
-                  {isTransmitting ? 'LORA TX' : isReceiving ? 'LORA RX' : 'CHRP MESH'}
-                </span>
-              </div>
-              <Radio className="w-3 h-3 text-amber-400" />
-            </div>
-
-            {/* Battery & Radio Signal */}
-            <div className="flex items-center gap-1.5 text-slate-300">
-              <span className="text-[10px] font-mono text-cyan-400">915MHz</span>
-              <Battery className="w-4 h-4 text-emerald-400" />
-            </div>
+    <div className="phone-preview">
+      <div className="phone-chassis">
+        <div className="phone-screen">
+          <div className="relative h-12 shrink-0 flex items-center justify-between px-7 text-[12px] font-semibold text-zinc-900">
+            <span>9:41</span>
+            <div className="absolute left-1/2 -translate-x-1/2 top-3 w-[92px] h-[25px] rounded-full bg-zinc-950" />
+            <div className="flex items-center gap-1.5"><Signal className="w-3.5 h-3.5" /><Battery className="w-5 h-5" /></div>
           </div>
-
-          {/* Body Content: Either Screen (Chat) or Back (Hardware Pouch) */}
-          <div className="relative flex-1 overflow-hidden flex flex-col">
-            {isFlippedToHardware ? (
-              <ChrpPouchHardware
-                radioConfig={radioConfig}
-                isTransmitting={isTransmitting}
-                isReceiving={isReceiving}
-                batteryPct={94}
-                onFlipBack={() => setIsFlippedToHardware(false)}
-              />
-            ) : (
-              children
-            )}
+          <div className="conversation-header">
+            <span className="w-8" aria-hidden="true" />
+            <div className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600"><Radio className="w-5 h-5" /></div>
+              <span className="text-[15px] font-semibold tracking-tight">Base camp</span>
+              <span className="text-[11px] text-zinc-500">{isTransmitting ? 'Sending through the mesh…' : isReceiving ? 'Receiving a message…' : 'Echo 05 · Off-grid, together'}</span>
+            </div>
+            <button onClick={() => setIsFlippedToHardware(!isFlippedToHardware)} aria-label={isFlippedToHardware ? 'Show conversation' : 'Inspect Chrp hardware'} title={isFlippedToHardware ? 'Show conversation' : 'Inspect hardware'} className="w-8 h-8 rounded-full bg-zinc-100 text-zinc-500 flex items-center justify-center hover:bg-zinc-200"><FlipHorizontal className="w-4 h-4" /></button>
           </div>
-
-          {/* iOS Bottom Home Indicator Bar */}
-          <div className="w-full py-1.5 flex justify-center bg-slate-950/80 backdrop-blur-sm pointer-events-none">
-            <div className="w-32 h-1 bg-slate-600 rounded-full" />
+          <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
+            {isFlippedToHardware ? <ChrpPouchHardware radioConfig={radioConfig} isTransmitting={isTransmitting} isReceiving={isReceiving} batteryPct={94} onFlipBack={() => setIsFlippedToHardware(false)} /> : children}
           </div>
+          <div className="flex justify-center py-2.5 bg-white"><div className="w-28 h-1 bg-zinc-900 rounded-full" /></div>
         </div>
       </div>
+      <p className="text-center text-xs text-zinc-400 mt-5">Your phone. A little more possibility.</p>
     </div>
   );
 };

@@ -19,6 +19,7 @@ interface MeshMapProps {
   onToggleNodeStatus: (nodeId: string) => void;
   onSelectNode: (node: MeshNode) => void;
   selectedNodeId?: string;
+  maxRangeKm?: number;
 }
 
 export const MeshMap: React.FC<MeshMapProps> = ({
@@ -29,6 +30,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
   onToggleNodeStatus,
   onSelectNode,
   selectedNodeId,
+  maxRangeKm = Infinity,
 }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [showTopoLines, setShowTopoLines] = useState(true);
@@ -49,10 +51,10 @@ export const MeshMap: React.FC<MeshMapProps> = ({
   return (
     <div
       ref={mapRef}
-      className="relative w-full h-[380px] bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden select-none"
+      className="mesh-map relative w-full h-[420px] rounded-[24px] border border-zinc-200 overflow-hidden select-none"
     >
       {/* Topographic Background Contour Lines Grid (SVG) */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-25">
+      <svg viewBox="0 0 740 400" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none opacity-25">
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#334155" strokeWidth="0.5" />
@@ -79,38 +81,39 @@ export const MeshMap: React.FC<MeshMapProps> = ({
 
       {/* Top Map HUD Bar */}
       <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-auto">
-        <div className="flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-800">
-          <Mountain className="w-4 h-4 text-amber-400" />
-          <span className="text-xs font-bold text-white tracking-tight">
-            Alpine Sector 7 Mesh Topography
+        <div className="flex items-center gap-2 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-zinc-200">
+          <Mountain className="w-4 h-4 text-blue-600" />
+          <span className="text-xs font-semibold text-zinc-900 tracking-tight">
+            The alpine network
           </span>
-          <span className="text-[10px] font-mono text-slate-400">· 915 MHz ISM Band</span>
+          <span className="text-[11px] tabular-nums text-zinc-500"></span>
         </div>
 
         <div className="flex items-center gap-2">
           <button
+            aria-pressed={showTopoLines}
             onClick={() => setShowTopoLines(!showTopoLines)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-slate-300 text-[11px] font-medium border border-slate-800 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/90 hover:bg-zinc-100 text-zinc-700 text-[11px] font-medium border border-zinc-200 transition-colors"
           >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Contours: {showTopoLines ? 'ON' : 'OFF'}</span>
+            <Layers className="w-3.5 h-3.5 text-blue-600" />
+            <span>Terrain: {showTopoLines ? 'on' : 'off'}</span>
           </button>
         </div>
       </div>
 
       {/* Mesh Radio Links Lines (SVG) */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+      <svg viewBox="0 0 740 400" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none z-10">
         {links.map((link, idx) => {
           const fromNode = nodes.find(n => n.id === link.fromNodeId);
           const toNode = nodes.find(n => n.id === link.toNodeId);
           if (!fromNode || !toNode) return null;
 
           const isActiveHop = isLinkInActiveRoute(fromNode.id, toNode.id);
-          const isBothOnline = fromNode.isOnline && toNode.isOnline;
+          const isBothOnline = fromNode.isOnline && toNode.isOnline && link.distanceKm <= maxRangeKm;
 
           let strokeColor = '#334155'; // offline
           if (isBothOnline) {
-            if (isActiveHop) strokeColor = '#f59e0b'; // active hop amber
+            if (isActiveHop) strokeColor = '#0071e3'; // active hop amber
             else if (link.rssiDbm > -90) strokeColor = '#10b981'; // strong green
             else if (link.rssiDbm > -105) strokeColor = '#06b6d4'; // medium cyan
             else strokeColor = '#f43f5e'; // weak red
@@ -138,7 +141,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
                 <text
                   x={midX}
                   y={midY - 4}
-                  fill="#94a3b8"
+                  fill="#71717a"
                   fontSize="9"
                   fontFamily="JetBrains Mono, monospace"
                   textAnchor="middle"
@@ -159,24 +162,17 @@ export const MeshMap: React.FC<MeshMapProps> = ({
 
           return (
             <g key={pkt.packetId}>
-              {/* Animated radio pulse circle along the vector */}
               <circle
-                r="6"
-                fill="#fbbf24"
-                className="animate-ping"
-                style={{
-                  cx: (fromNode.x + toNode.x) / 2,
-                  cy: (fromNode.y + toNode.y) / 2,
-                }}
-              />
-              <circle
-                cx={(fromNode.x + toNode.x) / 2}
-                cy={(fromNode.y + toNode.y) / 2}
+                cx={fromNode.x}
+                cy={fromNode.y}
                 r="4"
-                fill="#f59e0b"
+                fill="#0071e3"
                 stroke="#ffffff"
                 strokeWidth="1.5"
-              />
+              >
+                <animate attributeName="cx" from={fromNode.x} to={toNode.x} dur={`${pkt.playbackDurationMs ?? 800}ms`} fill="freeze" />
+                <animate attributeName="cy" from={fromNode.y} to={toNode.y} dur={`${pkt.playbackDurationMs ?? 800}ms`} fill="freeze" />
+              </circle>
             </g>
           );
         })}
@@ -191,7 +187,8 @@ export const MeshMap: React.FC<MeshMapProps> = ({
           return (
             <div
               key={node.id}
-              style={{ left: `${node.x}px`, top: `${node.y}px` }}
+              style={{ left: `${node.x / 740 * 100}%`, top: `${node.y / 400 * 100}%` }}
+              role="button" tabIndex={0} aria-label={`Inspect ${node.callsign}`} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelectNode(node); } }}
               className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto flex flex-col items-center group cursor-pointer"
               onClick={() => onSelectNode(node)}
             >
@@ -199,32 +196,32 @@ export const MeshMap: React.FC<MeshMapProps> = ({
               <div
                 className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all ${
                   !node.isOnline
-                    ? 'bg-slate-800 text-slate-500 border border-slate-700 opacity-60'
+                    ? 'bg-zinc-100 text-zinc-500 border border-zinc-300 opacity-60'
                     : isSelected
-                    ? 'bg-amber-500 text-slate-950 ring-4 ring-amber-500/30 shadow-lg'
+                    ? 'bg-blue-600 text-white ring-4 ring-blue-500/30 shadow-lg'
                     : isInActiveRoute
-                    ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-400/40 animate-pulse'
+                    ? 'bg-blue-600 text-white ring-2 ring-blue-400/40 '
                     : node.role === 'phone_sender' || node.role === 'phone_receiver'
-                    ? 'bg-cyan-600 text-white border border-cyan-400'
-                    : 'bg-slate-800 text-white border border-slate-600'
+                    ? 'bg-blue-600 text-white border border-blue-400'
+                    : 'bg-zinc-100 text-zinc-900 border border-zinc-300'
                 }`}
               >
                 <Radio className="w-4 h-4" />
 
                 {/* Battery micro indicator */}
                 <span
-                  className={`absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full border border-slate-950 ${
+                  className={`absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full border border-zinc-200 ${
                     node.batteryPct > 50 ? 'bg-emerald-400' : 'bg-rose-400'
                   }`}
                 />
               </div>
 
               {/* Node Callsign & Elevation Label */}
-              <div className="mt-1 flex flex-col items-center bg-slate-950/90 backdrop-blur-md px-1.5 py-0.5 rounded border border-slate-800 shadow-md">
-                <span className="text-[10px] font-mono font-bold text-white tracking-tight">
+              <div className="mt-1 flex flex-col items-center bg-zinc-50/90 backdrop-blur-md px-1.5 py-0.5 rounded border border-zinc-200 shadow-sm">
+                <span className="text-[11px] tabular-nums font-semibold text-zinc-900 tracking-tight">
                   {node.callsign}
                 </span>
-                <span className="text-[8px] font-mono text-slate-400">
+                <span className="text-[10px] tabular-nums text-zinc-500">
                   {node.elevationM}m · {node.isOnline ? 'ON' : 'OFF'}
                 </span>
               </div>
@@ -239,44 +236,44 @@ export const MeshMap: React.FC<MeshMapProps> = ({
         if (!selNode) return null;
 
         return (
-          <div className="absolute top-14 right-3 z-30 w-56 p-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-700/80 shadow-2xl text-xs space-y-2 pointer-events-auto animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+          <div className="absolute bottom-14 right-3 z-30 w-44 p-2.5 rounded-xl bg-white/95 backdrop-blur-md border border-zinc-300/80 shadow-lg text-xs space-y-2 pointer-events-auto animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-1.5 border-b border-zinc-200">
               <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                <span className="font-mono font-bold text-white">{selNode.callsign}</span>
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                <span className="tabular-nums font-semibold text-zinc-900">{selNode.callsign}</span>
               </div>
               <button
                 onClick={() => onToggleNodeStatus(selNode.id)}
-                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
+                className={`px-2 py-0.5 rounded text-[11px] tabular-nums font-semibold transition-colors ${
                   selNode.isOnline
-                    ? 'bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800'
-                    : 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800'
+                    ? 'bg-rose-50/60 hover:bg-rose-50/80 text-rose-600 border border-rose-200'
+                    : 'bg-emerald-50/60 hover:bg-emerald-50/80 text-emerald-600 border border-emerald-200'
                 }`}
               >
                 {selNode.isOnline ? 'Turn Offline' : 'Turn Online'}
               </button>
             </div>
 
-            <div className="space-y-1 text-[11px] font-mono text-slate-300">
+            <div className="space-y-1 text-[11px] tabular-nums text-zinc-700">
               <div className="flex justify-between">
-                <span className="text-slate-400">Location:</span>
-                <span className="text-white truncate max-w-[110px]">{selNode.name}</span>
+                <span className="text-zinc-500">Location:</span>
+                <span className="text-zinc-900 truncate max-w-[110px]">{selNode.name}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Elevation:</span>
-                <span className="text-white">{selNode.elevationM}m</span>
+                <span className="text-zinc-500">Elevation:</span>
+                <span className="text-zinc-900">{selNode.elevationM}m</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">RF Output:</span>
-                <span className="text-amber-400">+{selNode.rfPowerDbm} dBm</span>
+                <span className="text-zinc-500">RF Output:</span>
+                <span className="text-blue-600">+{selNode.rfPowerDbm} dBm</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Battery:</span>
-                <span className="text-emerald-400">{selNode.batteryPct}%</span>
+                <span className="text-zinc-500">Battery:</span>
+                <span className="text-emerald-600">{selNode.batteryPct}%</span>
               </div>
             </div>
 
-            <div className="text-[9px] text-slate-400 pt-1 border-t border-slate-800 leading-tight">
+            <div className="text-[10px] text-zinc-500 pt-1 border-t border-zinc-200 leading-tight">
               {selNode.isOnline
                 ? 'Relaying packets across LoRa mesh.'
                 : 'Node disabled. Packets will dynamically reroute.'}
@@ -286,24 +283,24 @@ export const MeshMap: React.FC<MeshMapProps> = ({
       })()}
 
       {/* Bottom Map Legend Bar */}
-      <div className="absolute bottom-2.5 left-3 right-3 z-20 flex items-center justify-between text-[10px] font-mono text-slate-400 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-800">
-        <div className="flex items-center gap-4">
+      <div className="absolute bottom-2.5 left-3 right-3 z-20 flex items-center justify-between text-[11px] tabular-nums text-zinc-500 bg-zinc-50/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-zinc-200">
+        <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span>Strong Link (&gt;-90dBm)</span>
+            <span>Strong</span>
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-cyan-400" />
-            <span>Medium Link</span>
+            <span className="w-2 h-2 rounded-full bg-blue-400" />
+            <span>Available</span>
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
-            <span>Active Hop Route</span>
+            <span className="w-2 h-2 rounded-full bg-blue-400" />
+            <span>Your route</span>
           </span>
         </div>
 
-        <div className="text-slate-300">
-          Tip: Click any node to inspect telemetry or toggle offline
+        <div className="hidden xl:block text-zinc-700">
+          Select a node · range is modeled
         </div>
       </div>
     </div>
