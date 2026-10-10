@@ -4,16 +4,16 @@
  * FEC parity recovery, link physics (RSSI, SNR, latency), and truthful delivery tracking.
  */
 
-import {
+import { RADIO_PRESETS } from '../types/mesh.ts';
+import type {
   LoRaPacket,
   LoRaPreset,
   MeshLink,
   MeshMessage,
   MeshNode,
-  RADIO_PRESETS,
   RadioConfig,
   RouteHopRecord,
-} from '../types/mesh';
+} from '../types/mesh.ts';
 
 export interface SimulationState {
   nodes: MeshNode[];
@@ -121,24 +121,23 @@ export const INITIAL_NODES: MeshNode[] = [
 
 export const INITIAL_LINKS: MeshLink[] = [
   { fromNodeId: 'node-alpha-01', toNodeId: 'node-relay-02', distanceKm: 2.1, rssiDbm: -82, snrDb: 6.5, baseLossPct: 8 },
-  { fromNodeId: 'node-alpha-01', toNodeId: 'node-solar-04', distanceKm: 3.4, rssiDbm: -92, snrDb: 3.2, baseLossPct: 12 },
   { fromNodeId: 'node-alpha-01', toNodeId: 'node-nomad-06', distanceKm: 2.7, rssiDbm: -88, snrDb: 4.8, baseLossPct: 10 },
   { fromNodeId: 'node-relay-02', toNodeId: 'node-relay-03', distanceKm: 2.8, rssiDbm: -98, snrDb: -1.5, baseLossPct: 20 },
-  { fromNodeId: 'node-relay-02', toNodeId: 'node-solar-04', distanceKm: 1.9, rssiDbm: -79, snrDb: 8.2, baseLossPct: 5 },
+  { fromNodeId: 'node-relay-03', toNodeId: 'node-solar-04', distanceKm: 2.2, rssiDbm: -91, snrDb: 2.8, baseLossPct: 14 },
   { fromNodeId: 'node-solar-04', toNodeId: 'node-echo-05', distanceKm: 3.2, rssiDbm: -94, snrDb: 2.1, baseLossPct: 15 },
-  { fromNodeId: 'node-relay-03', toNodeId: 'node-echo-05', distanceKm: 2.4, rssiDbm: -89, snrDb: 4.0, baseLossPct: 12 },
   { fromNodeId: 'node-nomad-06', toNodeId: 'node-relay-03', distanceKm: 2.9, rssiDbm: -95, snrDb: 1.1, baseLossPct: 18 },
 ];
 
-export function findRoutePath(fromId: string, toId: string, nodes: MeshNode[], links: MeshLink[]): string[] {
-  // Dijkstra / BFS based on online nodes and link RSSI
+export function findRoutePath(fromId: string, toId: string, nodes: MeshNode[], links: MeshLink[], radio?: RadioConfig): string[] {
   const onlineNodeIds = new Set(nodes.filter(n => n.isOnline).map(n => n.id));
-  if (!onlineNodeIds.has(fromId) || !onlineNodeIds.has(toId)) return [fromId, toId];
+  if (!onlineNodeIds.has(fromId) || !onlineNodeIds.has(toId)) return [];
+  if (fromId === toId) return [fromId];
 
   // Adjacency
   const adj: Record<string, string[]> = {};
   links.forEach(link => {
-    if (onlineNodeIds.has(link.fromNodeId) && onlineNodeIds.has(link.toNodeId)) {
+    const withinRange = !radio || link.distanceKm <= radio.maxRangeKm;
+    if (withinRange && onlineNodeIds.has(link.fromNodeId) && onlineNodeIds.has(link.toNodeId)) {
       if (!adj[link.fromNodeId]) adj[link.fromNodeId] = [];
       if (!adj[link.toNodeId]) adj[link.toNodeId] = [];
       adj[link.fromNodeId].push(link.toNodeId);
@@ -146,25 +145,29 @@ export function findRoutePath(fromId: string, toId: string, nodes: MeshNode[], l
     }
   });
 
-  const queue: string[][] = [[fromId]];
-  const visited = new Set<string>([fromId]);
-
-  while (queue.length > 0) {
-    const path = queue.shift()!;
-    const curr = path[path.length - 1];
-    if (curr === toId) return path;
-
-    const neighbors = adj[curr] || [];
-    for (const next of neighbors) {
-      if (!visited.has(next)) {
-        visited.add(next);
-        queue.push([...path, next]);
+  const bestCost = new Map<string, number>([[fromId, 0]]);
+  const previous = new Map<string, string>();
+  const pending = new Set<string>([fromId]);
+  while (pending.size) {
+    const curr = [...pending].sort((a, b) => (bestCost.get(a) ?? Infinity) - (bestCost.get(b) ?? Infinity))[0];
+    pending.delete(curr);
+    if (curr === toId) break;
+    for (const next of adj[curr] ?? []) {
+      const link = getLinkBetween(curr, next, links);
+      const cost = (bestCost.get(curr) ?? Infinity) + link.distanceKm * (1 + link.baseLossPct / 50);
+      if (cost < (bestCost.get(next) ?? Infinity)) {
+        bestCost.set(next, cost); previous.set(next, curr); pending.add(next);
       }
     }
   }
-
-  // Fallback default canonical path through Relay-02 and Relay-03
-  return [fromId, 'node-relay-02', 'node-relay-03', toId];
+  if (!previous.has(toId)) return [];
+  const route = [toId];
+  while (route[0] !== fromId) {
+    const parent = previous.get(route[0]);
+    if (!parent) return [];
+    route.unshift(parent);
+  }
+  return route;
 }
 
 export function getLinkBetween(fromId: string, toId: string, links: MeshLink[]): MeshLink {
@@ -183,18 +186,22 @@ export function getLinkBetween(fromId: string, toId: string, links: MeshLink[]):
 }
 
 export function calculatePacketAirtimeMs(payloadBytes: number, radio: RadioConfig): number {
-  // LoRa airtime formula approximation
-  // Time = (Preamble + Payload) / Bitrate
-  const bits = (payloadBytes + 16) * 8; // Include LoRa physical header & CRC
-  const rawMs = (bits / radio.bitrateBps) * 1000;
-  // Guard interval / preamble turnaround ~ 30-50ms
-  return Math.max(80, Math.round(rawMs + 40));
+  const sf = radio.spreadingFactor;
+  const bandwidth = radio.bandwidthKhz * 1000;
+  const codingRateIndex = radio.codingRate === '4/8' ? 4 : radio.codingRate === '4/7' ? 3 : radio.codingRate === '4/6' ? 2 : 1;
+  const symbolSeconds = (2 ** sf) / bandwidth;
+  const lowDataRateOptimization = symbolSeconds > 0.016 ? 1 : 0;
+  const numerator = 8 * payloadBytes - 4 * sf + 28 + 16;
+  const denominator = 4 * (sf - 2 * lowDataRateOptimization);
+  const payloadSymbols = 8 + Math.max(Math.ceil(numerator / denominator) * (codingRateIndex + 4), 0);
+  const preambleSymbols = 16 + 4.25;
+  return Math.max(1, Math.round((preambleSymbols + payloadSymbols) * symbolSeconds * 1000));
 }
 
-export function generateCrc16(data: string): string {
+export function generateCrc16(data: Uint8Array): string {
   let crc = 0xFFFF;
   for (let i = 0; i < data.length; i++) {
-    crc ^= data.charCodeAt(i);
+    crc ^= data[i];
     for (let j = 0; j < 8; j++) {
       if ((crc & 0x0001) !== 0) {
         crc = (crc >> 1) ^ 0xA001;

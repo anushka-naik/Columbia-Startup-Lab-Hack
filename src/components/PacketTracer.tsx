@@ -40,7 +40,7 @@ export const PacketTracer: React.FC<PacketTracerProps> = ({
             Sent: <strong className="text-white">{totalSent}</strong>
           </span>
           <span className="text-emerald-400">
-            ACK: <strong>{totalDelivered}</strong>
+            Route completions: <strong>{totalDelivered}</strong>
           </span>
           <span className="text-rose-400">
             Dropped: <strong>{totalDropped}</strong>

@@ -9,6 +9,8 @@ import {
   PlayCircle,
   RotateCcw,
   FastForward,
+  Pause,
+  Play,
 } from 'lucide-react';
 
 interface NetworkControlsProps {
@@ -21,6 +23,8 @@ interface NetworkControlsProps {
   onTriggerDemoScenario: (scenario: 'voice_loss' | 'progressive_recon' | 'fec_recovery' | 'extreme_slow') => void;
   onResetSimulation: () => void;
   isTransmitting: boolean;
+  isPaused: boolean;
+  onTogglePause: () => void;
 }
 
 export const NetworkControls: React.FC<NetworkControlsProps> = ({
@@ -33,6 +37,8 @@ export const NetworkControls: React.FC<NetworkControlsProps> = ({
   onTriggerDemoScenario,
   onResetSimulation,
   isTransmitting,
+  isPaused,
+  onTogglePause,
 }) => {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 text-slate-100">
@@ -45,7 +51,16 @@ export const NetworkControls: React.FC<NetworkControlsProps> = ({
           </h3>
         </div>
         <button
+          onClick={onTogglePause}
+          disabled={!isTransmitting}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40"
+        >
+          {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+          <span>{isPaused ? 'Resume' : 'Pause'}</span>
+        </button>
+        <button
           onClick={onResetSimulation}
+          disabled={isTransmitting}
           className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
         >
           <RotateCcw className="w-3.5 h-3.5" />
@@ -73,7 +88,7 @@ export const NetworkControls: React.FC<NetworkControlsProps> = ({
               01. Voice Note + 20% Loss
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">
-              Sends 460B voice clip across 3 hops. Recovers dropped chunk via ARQ NACK.
+              Records your voice and encodes it with Codec2. Applies 20% loss per hop; retry the missing packets.
             </div>
           </button>
 
@@ -86,7 +101,7 @@ export const NetworkControls: React.FC<NetworkControlsProps> = ({
               02. Progressive Recon Photo
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">
-              4 passes @ 230B. Chunk 1 renders instant blurry preview, then sharpens.
+              Compresses the included photo into a real WebP preview and sends its bytes through the mesh.
             </div>
           </button>
 
@@ -99,7 +114,7 @@ export const NetworkControls: React.FC<NetworkControlsProps> = ({
               03. FEC Parity Instant Recovery
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">
-              Packet #2 lost in canyon; reconstructed mathematically without NACK wait.
+              Sends a multi-packet text body with XOR parity. The demo erases one packet on purpose so recovery is easy to inspect.
             </div>
           </button>
         </div>

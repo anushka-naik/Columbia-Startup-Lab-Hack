@@ -1,663 +1,388 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  LoRaPacket,
-  LoRaPreset,
-  MeshLink,
-  MeshMessage,
-  MeshNode,
-  MessageType,
-  RADIO_PRESETS,
-  RadioConfig,
-} from './types/mesh';
-import {
-  INITIAL_NODES,
-  INITIAL_LINKS,
-  findRoutePath,
-  getLinkBetween,
-  calculatePacketAirtimeMs,
-  generateCrc16,
-} from './utils/meshEngine';
-import { encodeSpeechToLoRa, PRESET_VOICE_NOTES } from './utils/audioCodec';
-import { encodeImageToProgressiveLoRa, PRESET_PHOTOS } from './utils/imageCodec';
+import React, { useEffect, useRef, useState } from 'react';
+import { Activity, Check, Info, Play, Radio, Shield, TriangleAlert, Waves } from 'lucide-react';
+import { MessageComposer, SendMessageParams } from './components/MessageComposer';
 import { PhoneContainer } from './components/PhoneContainer';
 import { ChatFeed } from './components/ChatFeed';
-import { MessageComposer } from './components/MessageComposer';
 import { MeshMap } from './components/MeshMap';
-import { PacketTracer } from './components/PacketTracer';
 import { NetworkControls } from './components/NetworkControls';
+import { PacketTracer } from './components/PacketTracer';
 import { RouteInspectorModal } from './components/RouteInspectorModal';
-import {
-  Radio,
-  Sliders,
-  Terminal,
-  Layers,
-  Sparkles,
-  Zap,
-  Info,
-  CheckCircle2,
-  Shield,
-  Activity,
-  Play,
-} from 'lucide-react';
+import { LoRaPacket, LoRaPreset, MeshLink, MeshMessage, MeshNode, RADIO_PRESETS, RadioConfig } from './types/mesh';
+import { calculatePacketAirtimeMs, findRoutePath, generateCrc16, getLinkBetween, INITIAL_LINKS, INITIAL_NODES } from './utils/meshEngine';
+import { decodeCodec2, encodeCodec2 } from './utils/audioCodec';
+import { decodeVideoBurst, encodeImage, encodeVideoBurst, PRESET_PHOTOS } from './utils/imageCodec';
+import { assembleChunks, bytesToHex, chunkBytes, createXorParity, MEDIA_CHUNK_BYTES, recoverSingleMissingChunk, sha256Hex } from './utils/packetCodec';
+
+const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, Math.max(5, ms)));
+const concat = (...parts: Uint8Array[]) => {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0; for (const part of parts) { out.set(part, offset); offset += part.length; }
+  return out;
+};
+const asOwnedBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => Uint8Array.from(bytes);
+
+function estimateRouteSeconds(packetCount: number, route: string[], radio: RadioConfig, lossPct: number, speed: number): number {
+  if (packetCount <= 0 || route.length < 2) return 0;
+  const airtimeMs = calculatePacketAirtimeMs(230, radio);
+  let attemptAirtimeMs = 0;
+  let routeSuccess = 1;
+  for (let hop = 0; hop < route.length - 1; hop++) {
+    const hopLoss = lossPct / 100;
+    attemptAirtimeMs += routeSuccess * airtimeMs;
+    routeSuccess *= 1 - hopLoss;
+  }
+  if (routeSuccess <= 0) return 0;
+  // Expected retries restart at the source after any hop loses the packet.
+  return Math.ceil(packetCount * attemptAirtimeMs / routeSuccess / Math.max(1, speed) / 1000);
+}
+
+interface WireManifest {
+  type: SendMessageParams['type'];
+  note: string;
+  codec?: string;
+  mimeType: string;
+  width?: number;
+  height?: number;
+  durationSec?: number;
+  frames?: number;
+}
 
 export default function App() {
-  // Network simulation state
   const [nodes, setNodes] = useState<MeshNode[]>(INITIAL_NODES);
-  const [links, setLinks] = useState<MeshLink[]>(INITIAL_LINKS);
+  const [links] = useState<MeshLink[]>(INITIAL_LINKS);
   const [radioConfig, setRadioConfig] = useState<RadioConfig>(RADIO_PRESETS.medium_fast);
-  const [packetLossPct, setPacketLossPct] = useState<number>(20); // 20% loss requirement
-  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState<number>(2); // 2x for smooth responsive demo
-
-  // Communication state
+  const [packetLossPct, setPacketLossPct] = useState(20);
+  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState(10);
   const [messages, setMessages] = useState<MeshMessage[]>([]);
   const [activePackets, setActivePackets] = useState<LoRaPacket[]>([]);
-  const [eventLogs, setEventLogs] = useState<string[]>([]);
+  const [eventLogs, setEventLogs] = useState<string[]>(['Offline mesh ready · six virtual radios · content remains on this device.']);
   const [inspectedMessage, setInspectedMessage] = useState<MeshMessage | null>(null);
   const [selectedNode, setSelectedNode] = useState<MeshNode | null>(INITIAL_NODES[0]);
+  const [totalSent, setTotalSent] = useState(0);
+  const [totalDelivered, setTotalDelivered] = useState(0);
+  const [totalDropped, setTotalDropped] = useState(0);
+  const [fecRecoveries, setFecRecoveries] = useState(0);
+  const [radioBytes, setRadioBytes] = useState(0);
+  const [preparing, setPreparing] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const live = useRef({ nodes, links, radioConfig, packetLossPct, simSpeedMultiplier, isPaused });
+  const activeJobs = useRef(0);
+  const controlledFecDemo = useRef(false);
 
-  // Statistics
-  const [totalSent, setTotalSent] = useState<number>(0);
-  const [totalDelivered, setTotalDelivered] = useState<number>(0);
-  const [totalDropped, setTotalDropped] = useState<number>(0);
-  const [fecRecoveries, setFecRecoveries] = useState<number>(0);
-
-  // Active transmission indicator
-  const isTransmitting = activePackets.length > 0;
-  const isReceiving = activePackets.some(p => p.nextHopNodeId === 'node-alpha-01');
-
-  // Active route path for map highlight
-  const activeRoutePath = activePackets.length > 0
-    ? activePackets[0].routeHistory
-    : ['node-alpha-01', 'node-relay-02', 'node-relay-03', 'node-echo-05'];
+  useEffect(() => { live.current = { nodes, links, radioConfig, packetLossPct, simSpeedMultiplier, isPaused }; }, [nodes, links, radioConfig, packetLossPct, simSpeedMultiplier, isPaused]);
+  const isTransmitting = activePackets.length > 0 || preparing || activeJobs.current > 0;
+  const isReceiving = activePackets.some(packet => packet.nextHopNodeId === 'node-alpha-01');
+  const activeRoutePath = activePackets.length ? activePackets[0].routeHistory : ['node-alpha-01', 'node-relay-02', 'node-relay-03', 'node-echo-05'];
 
   const addLog = (text: string) => {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    setEventLogs(prev => [`[${time}] ${text}`, ...prev.slice(0, 40)]);
+    setEventLogs(previous => [`[${time}] ${text}`, ...previous].slice(0, 80));
   };
 
-  // Seed initial delivered message so judges see full UI on load
-  useEffect(() => {
-    const seedVoice = PRESET_VOICE_NOTES[0];
-    const encoded = encodeSpeechToLoRa(seedVoice.transcript, seedVoice.durationSec);
-    const initialMsg: MeshMessage = {
-      id: 'msg_seed_01',
-      senderNodeId: 'node-echo-05',
-      receiverNodeId: 'node-alpha-01',
-      senderCallsign: 'ECHO-05 (BASE)',
-      receiverCallsign: 'ALPHA-01',
-      timestamp: Date.now() - 120000,
-      type: 'voice',
-      textPayload: seedVoice.transcript,
-      audioData: {
-        durationSec: seedVoice.durationSec,
-        sampleRate: 8000,
-        speechTokens: encoded.phoneticTokens,
-        rawPcmWaveform: encoded.waveformSamples,
-        frequencyHz: [130, 135, 140],
-      },
-      totalBytesRaw: 48000,
-      compressedBytes: 460,
-      totalPackets: 2,
-      packetsReceived: 2,
-      receivedChunks: new Map([
-        [0, { packetId: 'seed_p0' } as LoRaPacket],
-        [1, { packetId: 'seed_p1' } as LoRaPacket],
-      ]),
-      status: 'delivered_verified',
-      statusDetail: 'Delivered across 3 hops · Verified (CRC-16 0xE8A4)',
-      etaSecondsRemaining: 0,
-      routePath: ['node-echo-05', 'node-relay-03', 'node-relay-02', 'node-alpha-01'],
-      hopRecords: [
-        { fromNodeId: 'node-echo-05', toNodeId: 'node-relay-03', rssiDbm: -89, snrDb: 4.0, latencyMs: 380, droppedCount: 0, success: true },
-        { fromNodeId: 'node-relay-03', toNodeId: 'node-relay-02', rssiDbm: -98, snrDb: -1.5, latencyMs: 420, droppedCount: 1, success: true },
-        { fromNodeId: 'node-relay-02', toNodeId: 'node-alpha-01', rssiDbm: -82, snrDb: 6.5, latencyMs: 360, droppedCount: 0, success: true },
-      ],
-      useFec: true,
-      crc16Checksum: '0xE8A4',
-      isCrcVerified: true,
-      startTime: Date.now() - 120000,
-      completedTime: Date.now() - 110000,
-      retransmittedPacketsCount: 1,
-    };
-
-    setMessages([initialMsg]);
-    addLog('CHRP LoRa Subsystem initialized on 915.000 MHz ISM Band.');
-    addLog('Ad-hoc peer discovered: 5 relay nodes available in routing table.');
-  }, []);
-
-  /**
-   * Main Network Dispatcher: Splits payload into 230-byte chunks and routes across mesh
-   */
-  const handleSendMessage = async (params: {
-    type: MessageType;
-    text: string;
-    audioPresetId?: string;
-    photoPresetId?: string;
-    customPhotoUrl?: string;
-    useFec: boolean;
-  }) => {
-    const sender = nodes.find(n => n.id === 'node-alpha-01') || nodes[0];
-    const receiver = nodes.find(n => n.id === 'node-echo-05') || nodes[4];
-    const route = findRoutePath(sender.id, receiver.id, nodes, links);
-
-    const messageId = `msg_${Date.now()}`;
-    const crc = generateCrc16(params.text + messageId);
-
-    let totalRawBytes = 0;
-    let totalChunks = 1;
-    let audioData: MeshMessage['audioData'];
-    let imageData: MeshMessage['imageData'];
-
-    if (params.type === 'text') {
-      totalRawBytes = params.text.length;
-      totalChunks = 1;
-    } else if (params.type === 'voice') {
-      const preset = PRESET_VOICE_NOTES.find(p => p.id === params.audioPresetId) || PRESET_VOICE_NOTES[0];
-      const encoded = encodeSpeechToLoRa(params.text, preset.durationSec, preset.basePitch);
-      totalRawBytes = encoded.rawByteSize;
-      totalChunks = 2; // 2 chunks @ 230B = 460B
-      audioData = {
-        durationSec: preset.durationSec,
-        sampleRate: 8000,
-        speechTokens: encoded.phoneticTokens,
-        rawPcmWaveform: encoded.waveformSamples,
-        frequencyHz: [130, 135, 140],
-      };
-    } else if (params.type === 'image') {
-      const photoSrc = params.customPhotoUrl || PRESET_PHOTOS[0].imageUrl;
-      const encoded = await encodeImageToProgressiveLoRa(photoSrc, 'Recon Photo', params.text, 4);
-      totalRawBytes = encoded.rawByteSize;
-      totalChunks = 4; // 4 chunks progressive
-      imageData = {
-        originalUrl: photoSrc,
-        description: params.text,
-        progressivePasses: encoded.progressivePasses,
-        currentPassIndex: 0,
-        vectorContours: encoded.vectorContours,
-      };
-    }
-
-    // Include 1 FEC Parity packet if FEC enabled
-    const totalPacketsToTransmit = params.useFec ? totalChunks + 1 : totalChunks;
-    const compressedBytes = totalChunks * 230;
-
-    // Calculate realistic airtime
-    const airtimePerHopMs = calculatePacketAirtimeMs(230, radioConfig);
-    const hopsCount = route.length - 1;
-    const estTimeSec = Math.round(((airtimePerHopMs * hopsCount * totalPacketsToTransmit) / 1000) / simSpeedMultiplier);
-
-    const newMsg: MeshMessage = {
-      id: messageId,
-      senderNodeId: sender.id,
-      receiverNodeId: receiver.id,
-      senderCallsign: sender.callsign,
-      receiverCallsign: receiver.callsign,
-      timestamp: Date.now(),
-      type: params.type,
-      textPayload: params.text,
-      audioData,
-      imageData,
-      totalBytesRaw: totalRawBytes,
-      compressedBytes,
-      totalPackets: totalChunks,
-      packetsReceived: 0,
-      receivedChunks: new Map(),
-      status: 'transmitting',
-      statusDetail: `Transmitting Chunk 1/${totalChunks} via ${sender.callsign}...`,
-      etaSecondsRemaining: Math.max(2, estTimeSec),
-      routePath: route,
-      hopRecords: route.slice(0, -1).map((fromId, i) => {
-        const link = getLinkBetween(fromId, route[i + 1], links);
-        return {
-          fromNodeId: fromId,
-          toNodeId: route[i + 1],
-          rssiDbm: link.rssiDbm,
-          snrDb: link.snrDb,
-          latencyMs: airtimePerHopMs,
-          droppedCount: 0,
-          success: true,
-        };
-      }),
-      useFec: params.useFec,
-      crc16Checksum: crc,
-      isCrcVerified: false,
-      startTime: Date.now(),
-      retransmittedPacketsCount: 0,
-    };
-
-    setMessages(prev => [newMsg, ...prev]);
-    addLog(`PACKETIZE: Squeezed ${(totalRawBytes / 1024).toFixed(1)}KB ${params.type.toUpperCase()} into ${totalChunks} LoRa packets of 230B.`);
-    if (params.useFec) {
-      addLog(`FEC ENABLED: Generated Reed-Solomon/XOR parity chunk for instant loss recovery.`);
-    }
-
-    // Dispatch packets sequentially
-    dispatchPacketsForMessage(newMsg, totalPacketsToTransmit, route, airtimePerHopMs);
+  const updateMessage = (id: string, change: (message: MeshMessage) => MeshMessage) => {
+    setMessages(previous => previous.map(message => message.id === id ? change(message) : message));
   };
 
-  /**
-   * Simulates the multi-hop transmission of packets with packet loss,
-   * ARQ NACK retransmission, and FEC parity recovery
-   */
-  const dispatchPacketsForMessage = (
-    msg: MeshMessage,
-    totalPacketsToTransmit: number,
-    route: string[],
-    hopAirtimeMs: number
-  ) => {
-    let packetIndex = 0;
-    const effectiveHopTime = Math.max(120, hopAirtimeMs / simSpeedMultiplier);
+  const currentRoute = () => findRoutePath('node-alpha-01', 'node-echo-05', live.current.nodes, live.current.links, live.current.radioConfig);
 
-    const transmitNextChunk = () => {
-      if (packetIndex >= totalPacketsToTransmit) return;
-
-      const currentSeq = packetIndex;
-      const isFecChunk = msg.useFec && currentSeq === totalPacketsToTransmit - 1;
-      packetIndex++;
-
-      setTotalSent(prev => prev + 1);
-
-      const packet: LoRaPacket = {
-        packetId: `pkt_${msg.id}_${currentSeq}_${Date.now()}`,
-        messageId: msg.id,
-        seqIndex: isFecChunk ? 99 : currentSeq,
-        totalChunks: msg.totalPackets,
-        type: isFecChunk ? 'fec_parity' : msg.type,
-        isFecParity: isFecChunk,
-        sourceNodeId: route[0],
-        targetNodeId: route[route.length - 1],
-        currentHopNodeId: route[0],
-        nextHopNodeId: route[1],
-        hopIndex: 0,
-        totalHops: route.length - 1,
-        payloadBytes: 230,
-        dataHexSnippet: `0x${Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0')}`,
-        crc16: generateCrc16(msg.id + currentSeq),
-        crcValid: true,
-        state: 'transmitting',
-        routeHistory: [route[0]],
-        sentAt: Date.now(),
-        retryCount: 0,
-      };
-
-      setActivePackets(prev => [...prev, packet]);
-      addLog(`TX START: Chunk #${currentSeq} (230B) dispatched from ${nodes.find(n => n.id === route[0])?.callsign}`);
-
-      // Simulate Hop Progression
-      simulateHop(packet, msg, route, 0, effectiveHopTime);
-
-      // Schedule next packet chunk flight
-      if (packetIndex < totalPacketsToTransmit) {
-        setTimeout(transmitNextChunk, effectiveHopTime * 1.5);
+  const transitPacket = async (message: MeshMessage, seqIndex: number, source: Uint8Array, type: MeshMessage['type'] | 'fec_parity' | 'ack', maxAttempts = 6): Promise<boolean> => {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (live.current.isPaused) {
+        updateMessage(message.id, item => ({ ...item, status: 'paused', statusDetail: 'Paused · waiting for transmission to resume.' }));
+        while (live.current.isPaused) await sleep(100);
       }
-    };
-
-    transmitNextChunk();
-  };
-
-  /**
-   * Advance a single packet through each hop in the route
-   */
-  const simulateHop = (
-    pkt: LoRaPacket,
-    msg: MeshMessage,
-    route: string[],
-    hopIdx: number,
-    hopTimeMs: number
-  ) => {
-    const fromNode = route[hopIdx];
-    const toNode = route[hopIdx + 1];
-
-    setTimeout(() => {
-      // 1. Check if packet is dropped on this hop based on packetLossPct
-      const isLost = Math.random() < (packetLossPct / 100);
-
-      if (isLost) {
-        setTotalDropped(prev => prev + 1);
-        const fromCall = nodes.find(n => n.id === fromNode)?.callsign;
-        const toCall = nodes.find(n => n.id === toNode)?.callsign;
-
-        addLog(`⚠ PACKET DROP: Chunk #${pkt.seqIndex} lost between ${fromCall} → ${toCall} (${packetLossPct}% loss rule)`);
-
-        // Update hop record
-        setMessages(prev =>
-          prev.map(m => {
-            if (m.id !== msg.id) return m;
-            const updatedHops = [...m.hopRecords];
-            if (updatedHops[hopIdx]) {
-              updatedHops[hopIdx] = {
-                ...updatedHops[hopIdx],
-                droppedCount: updatedHops[hopIdx].droppedCount + 1,
-                success: false,
-              };
-            }
-            return {
-              ...m,
-              status: 'packet_loss_recovering',
-              statusDetail: `Lost Chunk #${pkt.seqIndex} at ${fromCall} · Running ARQ NACK Recovery`,
-              hopRecords: updatedHops,
-            };
-          })
-        );
-
-        // If FEC is enabled on the message, test if parity can recover it
-        if (msg.useFec && pkt.seqIndex < msg.totalPackets) {
-          addLog(`⚡ FEC PARITY ACTIVE: Forward Error Correction reconstructing lost Chunk #${pkt.seqIndex} mathematically!`);
-          setFecRecoveries(prev => prev + 1);
-          handleChunkDelivered(msg, pkt.seqIndex, true);
-        } else {
-          // Trigger Selective Repeat ARQ: Retransmit chunk
-          addLog(`🔄 ARQ NACK FIRED: Target node requesting retransmission of Chunk #${pkt.seqIndex}`);
-          setMessages(prev =>
-            prev.map(m => (m.id === msg.id ? { ...m, retransmittedPacketsCount: m.retransmittedPacketsCount + 1 } : m))
-          );
-          setTimeout(() => {
-            addLog(`RESENDING: Chunk #${pkt.seqIndex} retransmitted along reverse mesh path`);
-            simulateHop(pkt, msg, route, hopIdx, hopTimeMs);
-          }, hopTimeMs * 2);
+      const route = type === 'ack'
+        ? findRoutePath('node-echo-05', 'node-alpha-01', live.current.nodes, live.current.links, live.current.radioConfig)
+        : currentRoute();
+      if (route.length < 2) {
+        updateMessage(message.id, item => ({ ...item, status: 'paused', statusDetail: 'No in-range route · waiting for a relay.' }));
+        await sleep(350);
+        continue;
+      }
+      const packetId = `${message.id}-${seqIndex}-${attempt}-${crypto.randomUUID().slice(0, 5)}`;
+      let packetRoute = [route[0]];
+      let lost = false;
+      for (let hop = 0; hop < route.length - 1; hop++) {
+        const from = route[hop]; const to = route[hop + 1];
+        const radio = live.current.radioConfig;
+        const size = source.length + 24;
+        const airtime = calculatePacketAirtimeMs(size, radio);
+        const pkt: LoRaPacket = {
+          packetId, messageId: message.id, seqIndex, totalChunks: message.totalPackets,
+          type, isFecParity: type === 'fec_parity', sourceNodeId: route[0], targetNodeId: route[route.length - 1],
+          currentHopNodeId: from, nextHopNodeId: to, hopIndex: hop, totalHops: route.length - 1,
+          payloadBytes: size, dataHexSnippet: bytesToHex(source), crc16: generateCrc16(source), crcValid: true,
+          state: attempt ? 'retrying' : hop ? 'relaying' : 'transmitting', routeHistory: packetRoute,
+          sentAt: Date.now(), retryCount: attempt, chunkData: source,
+        };
+        setActivePackets([pkt]); setTotalSent(value => value + 1); setRadioBytes(value => value + size);
+        updateMessage(message.id, item => ({ ...item, status: 'transmitting', transmittedBytes: item.transmittedBytes + size }));
+        await sleep(airtime / Math.max(1, live.current.simSpeedMultiplier));
+        if (live.current.isPaused) { hop--; continue; }
+        const forcedFecErasure = controlledFecDemo.current && type === 'text' && seqIndex === 1 && attempt === 0 && hop === 0;
+        const lossPct = live.current.packetLossPct;
+        if (forcedFecErasure || Math.random() < lossPct / 100) {
+          if (forcedFecErasure) controlledFecDemo.current = false;
+          lost = true; setTotalDropped(value => value + 1);
+          const droppedNode = live.current.nodes.find(node => node.id === to)?.callsign ?? to;
+          setNodes(previous => previous.map(node => node.id === from ? { ...node, packetsDropped: node.packetsDropped + 1 } : node));
+          addLog(`DROP · ${forcedFecErasure ? 'CONTROLLED FEC ERASURE · ' : ''}${type.toUpperCase()} #${seqIndex + 1} at ${droppedNode} · ${forcedFecErasure ? 'one packet intentionally erased for the recovery demo' : `${lossPct}% hop loss`}`);
+          updateMessage(message.id, item => ({ ...item, status: 'packet_loss_recovering', statusDetail: `Packet ${seqIndex + 1} lost at ${droppedNode} · retrying over a fresh route`, retransmittedPacketsCount: item.retransmittedPacketsCount + 1 }));
+          setActivePackets([]); break;
         }
-
-        // Remove from active in-flight
-        setActivePackets(prev => prev.filter(p => p.packetId !== pkt.packetId));
-        return;
+        if (hop < route.length - 2) {
+          setNodes(previous => previous.map(node => node.id === to ? { ...node, packetsRelayed: node.packetsRelayed + 1 } : node));
+          packetRoute = [...packetRoute, to];
+        }
       }
+      setActivePackets([]);
+      if (!lost) { setTotalDelivered(value => value + 1); return true; }
+      if (attempt < maxAttempts - 1) await sleep(70 / Math.max(1, live.current.simSpeedMultiplier));
+    }
+    return false;
+  };
 
-      // 2. Link Succeeded for this hop!
-      if (hopIdx + 1 < route.length - 1) {
-        // Forward to next hop
-        const nextHopIdx = hopIdx + 1;
-        const updatedPkt: LoRaPacket = {
-          ...pkt,
-          currentHopNodeId: route[nextHopIdx],
-          nextHopNodeId: route[nextHopIdx + 1],
-          hopIndex: nextHopIdx,
-          routeHistory: [...pkt.routeHistory, route[nextHopIdx]],
-          state: 'relaying',
-        };
+  const dispatch = async (
+    message: MeshMessage,
+    wire: Uint8Array,
+    metadataBytes: number,
+    mediaOffset: number,
+    mediaMimeType: string,
+    manifestHash: string,
+    useFec: boolean,
+  ) => {
+    const sourceChunks = chunkBytes(wire);
+    const parityBlocks = useFec ? createXorParity(sourceChunks) : [];
+    const received = new Map<number, Uint8Array>();
+    updateMessage(message.id, item => ({ ...item, totalPackets: sourceChunks.length, compressedBytes: wire.length, status: 'transmitting' }));
+    addLog(`PACKETIZE · ${wire.length.toLocaleString()} wire bytes into ${sourceChunks.length} data packets · ${MEDIA_CHUNK_BYTES} data bytes per packet · ${message.routePath.length - 1} hop route`);
+    if (parityBlocks.length) addLog(`XOR FEC · ${parityBlocks.length} real parity packet${parityBlocks.length === 1 ? '' : 's'} · one erased source packet per group of eight can be reconstructed.`);
 
-        const relayCall = nodes.find(n => n.id === route[nextHopIdx])?.callsign;
-        addLog(`RELAY HOP: ${relayCall} forwarded Chunk #${pkt.seqIndex} → ${nodes.find(n => n.id === route[nextHopIdx + 1])?.callsign}`);
+    let sentParityBlocks = 0;
+    const markReceived = (seq: number, bytes: Uint8Array, recovered = false) => {
+      if (received.has(seq)) return;
+      received.set(seq, bytes);
+      const chunks = new Map(message.receivedChunks);
+      chunks.set(seq, { packetId: `${message.id}-rx-${seq}`, messageId: message.id, seqIndex: seq, totalChunks: sourceChunks.length, type: message.type, sourceNodeId: message.senderNodeId, targetNodeId: message.receiverNodeId, currentHopNodeId: message.receiverNodeId, nextHopNodeId: message.receiverNodeId, hopIndex: Math.max(0, message.routePath.length - 2), totalHops: message.routePath.length - 1, payloadBytes: bytes.length + 24, dataHexSnippet: bytesToHex(bytes), crc16: generateCrc16(bytes), crcValid: true, state: recovered ? 'recovered_fec' : 'delivered', routeHistory: message.routePath, sentAt: Date.now(), deliveredAt: Date.now(), retryCount: 0, chunkData: bytes } as LoRaPacket);
+        const manifestArrived = [...Array(Math.ceil(metadataBytes / MEDIA_CHUNK_BYTES)).keys()].every(index => received.has(index));
+      const receivedBytes = [...received.values()].reduce((sum, chunk) => sum + chunk.length, 0);
+      const remainingPackets = sourceChunks.length - received.size + parityBlocks.length - sentParityBlocks + 1;
+      const eta = estimateRouteSeconds(remainingPackets, currentRoute(), live.current.radioConfig, live.current.packetLossPct, live.current.simSpeedMultiplier);
+      updateMessage(message.id, item => ({
+        ...item, receivedChunks: chunks, packetsReceived: received.size,
+        transcript: message.type !== 'text' && manifestArrived && item.textPayload ? item.textPayload : item.transcript,
+        status: 'transmitting', statusDetail: recovered ? `Recovered packet ${seq + 1} with XOR parity · ${received.size}/${sourceChunks.length} packets at receiver` : `Received ${received.size}/${sourceChunks.length} data packets · ${receivedBytes} bytes`,
+        etaSecondsRemaining: eta,
+      }));
+      if (recovered) { setFecRecoveries(value => value + 1); addLog(`FEC RECOVERY · Reconstructed missing source packet #${seq + 1} from received XOR parity.`); }
+    };
 
-        setActivePackets(prev => prev.map(p => (p.packetId === pkt.packetId ? updatedPkt : p)));
-        simulateHop(updatedPkt, msg, route, nextHopIdx, hopTimeMs);
+    for (let start = 0; start < sourceChunks.length; start += 8) {
+      const end = Math.min(sourceChunks.length, start + 8);
+      for (let seq = start; seq < end; seq++) {
+        const delivered = await transitPacket(message, seq, sourceChunks[seq], message.type, useFec ? 1 : 6);
+        if (delivered) markReceived(seq, sourceChunks[seq]);
+      }
+      const parity = parityBlocks.find(block => block.firstSequence === start);
+      if (parity) {
+        try {
+          const parityDelivered = await transitPacket(message, sourceChunks.length + parity.groupIndex, parity.bytes, 'fec_parity');
+          if (!parityDelivered) addLog('FEC PARITY LOST · source chunks remain protected by selective retransmission.');
+          else {
+            sentParityBlocks++;
+            const missing = parity.sourceSequences.filter(seq => !received.has(seq));
+            if (missing.length === 1) {
+              const rebuilt = recoverSingleMissingChunk(received, parity.bytes, parity.sourceSequences, missing[0]);
+              const expectedLength = sourceChunks[missing[0]].length;
+              const restored = rebuilt.slice(0, expectedLength);
+              sourceChunks[missing[0]] = restored; markReceived(missing[0], restored, true);
+            } else if (missing.length > 1) addLog(`FEC BLOCK · ${missing.length} losses exceed one-packet XOR recovery · requesting selective repairs.`);
+          }
+        } catch { addLog(`FEC PARITY LOST · source chunks remain protected by selective retransmission.`); }
+      }
+      for (let seq = start; seq < end; seq++) {
+        if (!received.has(seq)) {
+          const repaired = await transitPacket(message, seq, sourceChunks[seq], message.type);
+          if (!repaired) throw new Error(`Packet ${seq + 1} did not reach the receiver after six attempts.`);
+          markReceived(seq, sourceChunks[seq]);
+        }
+      }
+    }
+
+    updateMessage(message.id, item => ({ ...item, status: 'reassembling', statusDetail: 'All source packets reached the receiver · verifying the reconstructed message.' }));
+    const reconstructed = assembleChunks(received, sourceChunks.length, wire.length);
+    if (await sha256Hex(reconstructed) !== manifestHash) throw new Error('The reassembled message failed its SHA-256 integrity check.');
+    const view = new DataView(reconstructed.buffer, reconstructed.byteOffset, reconstructed.byteLength);
+    const actualManifestLength = view.getUint32(0, false);
+    const manifest = JSON.parse(new TextDecoder().decode(reconstructed.subarray(4, 4 + actualManifestLength))) as WireManifest;
+    if (4 + actualManifestLength !== mediaOffset || manifest.mimeType !== mediaMimeType) throw new Error('The received media manifest did not match the encoded payload.');
+    const media = reconstructed.slice(mediaOffset);
+
+    let receivedUrl: string;
+    if (manifest.type === 'voice') {
+      const audio = await decodeCodec2(media);
+      receivedUrl = URL.createObjectURL(audio);
+    } else if (manifest.type === 'video_burst') {
+      const frames = decodeVideoBurst(media);
+      await Promise.all(frames.map(frame => new Promise<void>((resolve, reject) => {
+        const image = new Image(); image.onload = () => resolve(); image.onerror = () => reject(new Error('A reconstructed video keyframe did not decode.')); image.src = frame.src;
+      })));
+      receivedUrl = URL.createObjectURL(new Blob([media], { type: 'application/x-chrp-video-burst' }));
+    } else if (manifest.type === 'image') {
+      const image = new Image(); receivedUrl = URL.createObjectURL(new Blob([media], { type: manifest.mimeType })); image.src = receivedUrl;
+      await image.decode();
+    } else {
+      receivedUrl = '';
+    }
+    updateMessage(message.id, item => ({ ...item, status: 'reassembling', statusDetail: `Receiver verified SHA-256 and decoded the ${manifest.type} representation · waiting for the receipt to return.`, isIntegrityVerified: true, receivedUrl, codecLabel: manifest.codec, mediaMimeType: manifest.mimeType, mediaWidth: manifest.width, mediaHeight: manifest.height, textPayload: manifest.note || item.textPayload, etaSecondsRemaining: estimateRouteSeconds(1, findRoutePath('node-echo-05', 'node-alpha-01', live.current.nodes, live.current.links, live.current.radioConfig), live.current.radioConfig, live.current.packetLossPct, live.current.simSpeedMultiplier) }));
+    const ackNodeSnapshot = live.current.nodes;
+    const receiverNode = ackNodeSnapshot.find(node => node.id === message.receiverNodeId);
+    if (!receiverNode?.isOnline) throw new Error('Media is verified at the receiver, but its delivery receipt cannot return while the receiver is offline.');
+    const ackReceived = await transitPacket(message, sourceChunks.length + parityBlocks.length, new TextEncoder().encode(`ACK:${manifestHash}`), 'ack');
+    if (!ackReceived) throw new Error('Receiver verified and decoded the media, but its delivery receipt could not return to the sender.');
+    const durationSec = manifest.durationSec;
+    updateMessage(message.id, item => ({ ...item, status: 'delivered_verified', statusDetail: `Delivered · receiver reassembled ${wire.length.toLocaleString()} bytes, SHA-256 verified, and decoded the ${manifest.type} representation.`, isIntegrityVerified: true, receivedUrl, codecLabel: manifest.codec, mediaMimeType: manifest.mimeType, mediaWidth: manifest.width, mediaHeight: manifest.height, textPayload: manifest.note || undefined, etaSecondsRemaining: 0, completedTime: Date.now(), isPartial: false }));
+    setTotalDelivered(value => value + 1);
+    addLog(`DELIVERY RECEIPT · ${receiverNode.callsign} verified and decoded ${manifest.type}${durationSec ? ` (${durationSec.toFixed(1)} s)` : ''} · SHA-256 ${manifestHash.slice(0, 12)}…`);
+  };
+
+  const handleSendMessage = async (params: SendMessageParams) => {
+    const sender = live.current.nodes.find(node => node.id === 'node-alpha-01');
+    const receiver = live.current.nodes.find(node => node.id === 'node-echo-05');
+    const route = findRoutePath(sender?.id ?? '', receiver?.id ?? '', live.current.nodes, live.current.links, live.current.radioConfig);
+    if (!sender || !receiver || route.length < 2) throw new Error('There is no in-range route to the selected receiver. Bring a relay online or select a longer-range preset.');
+    if (activeJobs.current > 0) throw new Error('One shared-radio transfer is already active. Wait for it to finish.');
+    activeJobs.current++;
+    setPreparing(true);
+    let media = new Uint8Array(); let manifest: WireManifest; let sourceBytes = 0;
+    try {
+      if (params.type === 'voice') {
+        if (!params.audioBlob) throw new Error('Record or select an audio file first.');
+        addLog('VOICE · Resampling to mono 8 kHz and encoding the real recording with Codec2…');
+        const encoded = await encodeCodec2(params.audioBlob, params.codecMode ?? '700');
+        media = asOwnedBytes(encoded.bytes); sourceBytes = encoded.pcmBytes;
+        manifest = { type: 'voice', note: params.text.trim(), codec: `Codec2 ${encoded.mode === '700' ? '700C' : encoded.mode} · ${encoded.mode} bps`, mimeType: encoded.mimeType, durationSec: encoded.durationSec };
+        addLog(`CODEC2 · ${encoded.durationSec.toFixed(1)} seconds · ${media.length.toLocaleString()} encoded bytes · ${Math.ceil(media.length / MEDIA_CHUNK_BYTES)} media packets.`);
+      } else if (params.type === 'image') {
+        let source = params.imageBlob;
+        if (!source) {
+          const photo = PRESET_PHOTOS[0]; source = await (await fetch(photo.imageUrl)).blob();
+        }
+        addLog('IMAGE · Creating an independently decodable WebP preview within the radio budget…');
+        const encoded = await encodeImage(source, 1350, 144);
+        media = asOwnedBytes(encoded.bytes); sourceBytes = encoded.originalBytes;
+        manifest = { type: 'image', note: params.text.trim(), mimeType: encoded.mimeType, width: encoded.width, height: encoded.height };
+        addLog(`IMAGE PREVIEW · ${encoded.width}×${encoded.height} · ${media.length.toLocaleString()} WebP bytes from ${sourceBytes.toLocaleString()} source bytes.`);
+      } else if (params.type === 'video_burst') {
+        if (!params.videoBlob) throw new Error('Select a video clip first.');
+        addLog('VIDEO · Extracting and compressing up to five genuine keyframes…');
+        const encoded = await encodeVideoBurst(params.videoBlob);
+        media = asOwnedBytes(encoded.bytes); sourceBytes = encoded.originalBytes;
+        manifest = { type: 'video_burst', note: params.text.trim(), mimeType: encoded.mimeType, frames: encoded.frameCount, durationSec: encoded.durationSec };
+        addLog(`VIDEO BURST · ${encoded.frameCount} keyframes over ${encoded.durationSec.toFixed(1)} seconds · ${media.length.toLocaleString()} bytes.`);
       } else {
-        // 3. Final Destination Reached!
-        setActivePackets(prev => prev.filter(p => p.packetId !== pkt.packetId));
-        setTotalDelivered(prev => prev + 1);
-
-        if (pkt.isFecParity) {
-          addLog(`✓ PARITY RECEIVED: FEC Parity chunk validated on final recipient.`);
-        } else {
-          handleChunkDelivered(msg, pkt.seqIndex, false);
-        }
+        media = new TextEncoder().encode(params.text);
+        sourceBytes = media.length;
+        manifest = { type: 'text', note: '', mimeType: 'text/plain; charset=utf-8' };
       }
-    }, hopTimeMs);
-  };
-
-  /**
-   * Handle successful chunk arrival at the final recipient
-   */
-  const handleChunkDelivered = (msg: MeshMessage, chunkSeq: number, wasRecoveredByFec: boolean) => {
-    setMessages(prev =>
-      prev.map(m => {
-        if (m.id !== msg.id) return m;
-
-        const newReceivedMap = new Map(m.receivedChunks);
-        newReceivedMap.set(chunkSeq, {
-          packetId: `ack_${chunkSeq}`,
-          seqIndex: chunkSeq,
-        } as LoRaPacket);
-
-        const newReceivedCount = newReceivedMap.size;
-        const isComplete = newReceivedCount >= m.totalPackets;
-
-        // Progressive image pass enhancement as chunks land!
-        let updatedImageData = m.imageData;
-        if (updatedImageData && m.type === 'image') {
-          updatedImageData = {
-            ...updatedImageData,
-            currentPassIndex: Math.min(newReceivedCount, 4),
-          };
-        }
-
-        const remainingEta = Math.max(0, Math.round(m.etaSecondsRemaining * (1 - newReceivedCount / m.totalPackets)));
-
-        if (isComplete) {
-          addLog(`✓✓ MESSAGE DELIVERED & VERIFIED: All ${m.totalPackets} chunks verified (CRC-16 ${m.crc16Checksum})`);
-        } else {
-          addLog(`CHUNK ACK: Chunk #${chunkSeq} arrived at ${m.receiverCallsign} (${newReceivedCount}/${m.totalPackets})`);
-        }
-
-        return {
-          ...m,
-          packetsReceived: newReceivedCount,
-          receivedChunks: newReceivedMap,
-          imageData: updatedImageData,
-          status: isComplete ? 'delivered_verified' : 'relaying',
-          statusDetail: isComplete
-            ? `Delivered & Verified (CRC-16 ${m.crc16Checksum})`
-            : `Relaying: Received ${newReceivedCount}/${m.totalPackets} chunks (ETA ${remainingEta}s)`,
-          etaSecondsRemaining: isComplete ? 0 : remainingEta,
-          isCrcVerified: isComplete,
-          completedTime: isComplete ? Date.now() : undefined,
-        };
-      })
-    );
-  };
-
-  /**
-   * 1-Click Judge Demo Scenarios
-   */
-  const handleTriggerDemoScenario = (scenario: 'voice_loss' | 'progressive_recon' | 'fec_recovery' | 'extreme_slow') => {
-    if (scenario === 'voice_loss') {
-      // 1. Voice Note across 20% loss
-      setRadioConfig(RADIO_PRESETS.medium_fast);
-      setPacketLossPct(20);
-      setSimSpeedMultiplier(2);
-      const voicePreset = PRESET_VOICE_NOTES[0];
-      handleSendMessage({
-        type: 'voice',
-        text: voicePreset.transcript,
-        audioPresetId: voicePreset.id,
-        useFec: false, // Turn off FEC to showcase Selective Repeat ARQ NACK retransmission!
-      });
-    } else if (scenario === 'progressive_recon') {
-      // 2. Progressive Recon Photo in 4 passes
-      setRadioConfig(RADIO_PRESETS.medium_fast);
-      setPacketLossPct(10);
-      setSimSpeedMultiplier(2);
-      handleSendMessage({
-        type: 'image',
-        text: 'Alpine Pass Recon Checkpoint (2,780m)',
-        photoPresetId: PRESET_PHOTOS[0].id,
-        customPhotoUrl: PRESET_PHOTOS[0].imageUrl,
-        useFec: true,
-      });
-    } else if (scenario === 'fec_recovery') {
-      // 3. Instant FEC Parity Recovery
-      setRadioConfig(RADIO_PRESETS.medium_fast);
-      setPacketLossPct(25);
-      setSimSpeedMultiplier(2);
-      handleSendMessage({
-        type: 'voice',
-        text: 'Base Command to Alpha 01: High-loss channel active. Testing Reed-Solomon parity recovery.',
-        audioPresetId: PRESET_VOICE_NOTES[1].id,
-        useFec: true,
-      });
-    } else if (scenario === 'extreme_slow') {
-      // 4. Extreme Slow preset stress test
-      setRadioConfig(RADIO_PRESETS.extreme_slow);
-      setSimSpeedMultiplier(5); // Speed up clock so judges don't wait 40 seconds
-      handleSendMessage({
-        type: 'text',
-        text: 'EMERGENCY: Deep canyon beacon active. 250 bps long range link.',
-        useFec: true,
-      });
+      const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+      const lengthPrefix = new Uint8Array(4); new DataView(lengthPrefix.buffer).setUint32(0, manifestBytes.length, false);
+      const metadataBytes = 4 + manifestBytes.length;
+      const wire = concat(lengthPrefix, manifestBytes, media);
+      const chunks = chunkBytes(wire);
+      const parityCount = params.useFec ? createXorParity(chunks).length : 0;
+      const initialEta = estimateRouteSeconds(chunks.length + parityCount + 1, route, live.current.radioConfig, live.current.packetLossPct, live.current.simSpeedMultiplier);
+      const wireHash = await sha256Hex(wire);
+      const messageId = `chrp-${crypto.randomUUID()}`;
+      const emptyMap = new Map<number, LoRaPacket>();
+      const queued: MeshMessage = {
+        id: messageId, senderNodeId: sender.id, receiverNodeId: receiver.id, senderCallsign: sender.callsign, receiverCallsign: receiver.callsign,
+        timestamp: Date.now(), type: params.type, textPayload: params.text, transcript: undefined,
+        totalBytesRaw: sourceBytes, compressedBytes: wire.length, totalPackets: chunkBytes(wire).length, packetsReceived: 0,
+        receivedChunks: emptyMap, status: 'queued', statusDetail: 'Queued on the local radio · receiver has not received this content yet.',
+        etaSecondsRemaining: initialEta, routePath: route, hopRecords: route.slice(0, -1).map((from, index) => {
+          const link = getLinkBetween(from, route[index + 1], live.current.links);
+          return { fromNodeId: from, toNodeId: route[index + 1], rssiDbm: link.rssiDbm, snrDb: link.snrDb, latencyMs: calculatePacketAirtimeMs(230, live.current.radioConfig), droppedCount: 0, success: false };
+        }),
+        useFec: params.useFec, integrityHashLabel: `SHA-256 ${wireHash.slice(0, 16)}`, isIntegrityVerified: false,
+        startTime: Date.now(), retransmittedPacketsCount: 0, transmittedBytes: 0,
+        sourceUrl: undefined,
+        mediaMimeType: manifest.mimeType, mediaWidth: manifest.width, mediaHeight: manifest.height, codecLabel: manifest.codec,
+      };
+      setMessages(previous => [queued, ...previous]);
+      setPreparing(false);
+      dispatch(queued, wire, metadataBytes, metadataBytes, manifest.mimeType, wireHash, params.useFec).catch(error => {
+        const detail = error instanceof Error ? error.message : 'Transfer failed.';
+        updateMessage(messageId, item => ({ ...item, status: 'failed', statusDetail: `${detail} · verified delivery was not confirmed.` }));
+        addLog(`TRANSFER INCOMPLETE · ${detail}`);
+      }).finally(() => { activeJobs.current = Math.max(0, activeJobs.current - 1); });
+    } catch (error) {
+      activeJobs.current = Math.max(0, activeJobs.current - 1);
+      setPreparing(false);
+      throw error;
     }
   };
 
-  const handleResetSimulation = () => {
-    setActivePackets([]);
-    setNodes(INITIAL_NODES);
-    setEventLogs(['Simulation reset to nominal state.']);
-    setTotalSent(0);
-    setTotalDelivered(0);
-    setTotalDropped(0);
-    setFecRecoveries(0);
+  const triggerScenario = (scenario: 'voice_loss' | 'progressive_recon' | 'fec_recovery' | 'extreme_slow') => {
+    const nextLoss = scenario === 'fec_recovery' ? 0 : 20;
+    const nextRadio = scenario === 'extreme_slow' ? RADIO_PRESETS.extreme_slow : RADIO_PRESETS.medium_fast;
+    setPacketLossPct(nextLoss); setRadioConfig(nextRadio); setSimSpeedMultiplier(10);
+    live.current = { ...live.current, packetLossPct: nextLoss, radioConfig: nextRadio, simSpeedMultiplier: 10 };
+    if (scenario === 'voice_loss') { addLog('VOICE DEMO · Record a real voice note with the microphone button; the selected Codec2 profile and 20% hop loss will be applied.'); return; }
+    if (scenario === 'fec_recovery') { controlledFecDemo.current = true; addLog('FEC DEMO · Background loss is set to 0%; the demo intentionally erases one source packet so its received parity can visibly recover it.'); }
+    if (scenario === 'progressive_recon') {
+      const photo = PRESET_PHOTOS[0];
+      void handleSendMessage({ type: 'image', text: photo.description, imageBlob: undefined, imageName: photo.title, useFec: true }).catch(error => addLog(error instanceof Error ? error.message : 'Could not start image demo.'));
+      return;
+    }
+    const text = scenario === 'fec_recovery'
+      ? 'XOR parity demo: this message is intentionally larger than one LoRa packet. Every byte is split into 206-byte source chunks, then one XOR repair packet is sent for the group. If exactly one source packet is erased and the remaining source chunks plus parity arrive, the receiver reconstructs the missing bytes before SHA-256 verification. '.repeat(2)
+      : 'Long range link selected. This text message still waits for a receiver receipt.';
+    void handleSendMessage({ type: 'text', text, useFec: true }).catch(error => addLog(error instanceof Error ? error.message : 'Could not start mesh demo.'));
   };
 
-  const handleToggleNodeStatus = (nodeId: string) => {
-    setNodes(prev =>
-      prev.map(n => {
-        if (n.id === nodeId) {
-          const nextState = !n.isOnline;
-          addLog(`TOPOLOGY UPDATE: Node ${n.callsign} switched ${nextState ? 'ONLINE' : 'OFFLINE'}. Dynamic reroute active.`);
-          return { ...n, isOnline: nextState };
-        }
-        return n;
-      })
-    );
+  const reset = () => {
+    setActivePackets([]); setNodes(INITIAL_NODES); setMessages([]); setEventLogs(['Simulation reset · no previous receiver content is retained.']);
+    setTotalSent(0); setTotalDelivered(0); setTotalDropped(0); setFecRecoveries(0); setRadioBytes(0); setPreparing(false);
   };
+
+  const toggleNode = (id: string) => setNodes(previous => previous.map(node => node.id === id ? { ...node, isOnline: !node.isOnline } : node));
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Top Bar Contract (1 row, 3 zones: Brand, 4 links, 1 primary CTA) */}
-      <header className="flex items-center justify-between gap-8 px-6 py-3.5 border-b border-slate-800 bg-slate-950/90 backdrop-blur-md sticky top-0 z-40">
-        {/* Zone 1: Brand wordmark */}
-        <div className="flex items-center gap-2.5 shrink-0 whitespace-nowrap">
-          <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
-            <Radio className="w-4 h-4" />
-          </div>
-          <span className="text-base font-bold tracking-tight text-white">
-            CHRP Mesh Simulator
-          </span>
-        </div>
-
-        {/* Zone 2: 4 single-line nav links */}
-        <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-400">
-          <a href="#topology" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-            Simulated Mesh (5+ Nodes)
-          </a>
-          <a href="#codecs" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-            Media Codecs (230B MTU)
-          </a>
-          <a href="#survival" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-            Network Survival & ARQ
-          </a>
-          <a href="#status" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-            Honest Delivery Tracking
-          </a>
-        </nav>
-
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            onClick={() => handleTriggerDemoScenario('voice_loss')}
-            disabled={isTransmitting}
-            className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl transition-all shadow-md shadow-amber-500/20 whitespace-nowrap shrink-0 active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Launch Judge Demo</span>
-          </button>
-        </div>
+      <header className="flex items-center justify-between gap-5 px-5 py-3 border-b border-slate-800 bg-slate-950/90 sticky top-0 z-40">
+        <div className="flex items-center gap-2.5"><div className="w-8 h-8 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center"><Radio className="w-4 h-4" /></div><div><div className="text-sm font-bold text-white">CHRP Off‑Grid</div><div className="text-[9px] text-emerald-300 font-mono">LOCAL MESH · NO CELLULAR · NO WI‑FI</div></div></div>
+        <nav className="hidden lg:flex items-center gap-5 text-[11px] text-slate-400"><a href="#phone" className="hover:text-white">Messages</a><a href="#topology" className="hover:text-white">Mesh</a><a href="#network" className="hover:text-white">Radio settings</a><a href="#telemetry" className="hover:text-white">Packet log</a></nav>
+        <button onClick={() => triggerScenario('progressive_recon')} disabled={isTransmitting} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold bg-amber-400 text-slate-950 disabled:opacity-50"><Play className="w-3 h-3 fill-current" />Run image demo</button>
       </header>
 
-      {/* Main Workspace: Dual-Pane Desktop Layout (iPhone Messenger on Left + Tactical Mesh Console on Right) */}
-      <main className="flex-1 w-full max-w-[1560px] mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* LEFT COLUMN: iPhone 16 Pro Device Frame (4.5 cols) */}
-        <div className="lg:col-span-5 flex flex-col items-center">
-          <div className="w-full max-w-[390px] mb-2 flex items-center justify-between text-xs text-slate-400 px-2 font-mono">
-            <span>CHRP Hardware Attached</span>
-            <span className="text-amber-400 font-semibold">915MHz LoRa Link</span>
-          </div>
-
-          <PhoneContainer
-            radioConfig={radioConfig}
-            isTransmitting={isTransmitting}
-            isReceiving={isReceiving}
-            senderCallsign="ALPHA-01"
-          >
-            {/* Inside iPhone: Honest Messaging Feed */}
-            <ChatFeed
-              messages={messages}
-              nodes={nodes}
-              onOpenRouteInspector={(msg) => setInspectedMessage(msg)}
-            />
-
-            {/* Bottom Message & Media Composer */}
-            <MessageComposer
-              onSendMessage={handleSendMessage}
-              isTransmitting={isTransmitting}
-              recipientCallsign="ECHO-05 (BASE)"
-            />
+      <main className="flex-1 w-full max-w-[1500px] mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <section id="phone" className="lg:col-span-5 flex flex-col items-center w-full"><div className="w-full max-w-[390px] mb-2 flex items-center justify-between text-[10px] text-slate-400 px-2 font-mono"><span>CHRP POUCH RADIO</span><span>{radioConfig.name}</span></div>
+          <PhoneContainer radioConfig={radioConfig} isTransmitting={isTransmitting} isReceiving={isReceiving} senderCallsign="ALPHA-01">
+            <ChatFeed messages={messages} nodes={nodes} onOpenRouteInspector={setInspectedMessage} />
+            <MessageComposer onSendMessage={handleSendMessage} isTransmitting={isTransmitting} recipientCallsign="ECHO-05 · BASE" />
           </PhoneContainer>
-        </div>
+        </section>
 
-        {/* RIGHT COLUMN: Tactical Topographic Mesh Map & Live Telemetry Console (7.5 cols) */}
-        <div className="lg:col-span-7 space-y-5">
-          {/* 1. Interactive Topographic Mesh Map (6 Nodes, RSSI, Animated Packet Waves) */}
-          <div id="topology">
-            <MeshMap
-              nodes={nodes}
-              links={links}
-              activePackets={activePackets}
-              activeRoutePath={activeRoutePath}
-              onToggleNodeStatus={handleToggleNodeStatus}
-              onSelectNode={(node) => setSelectedNode(node)}
-              selectedNodeId={selectedNode?.id}
-            />
+        <section className="lg:col-span-7 space-y-5 min-w-0">
+          <div id="topology"><MeshMap nodes={nodes} links={links} activePackets={activePackets} activeRoutePath={activeRoutePath} onToggleNodeStatus={toggleNode} onSelectNode={setSelectedNode} selectedNodeId={selectedNode?.id} /></div>
+          <div id="network"><NetworkControls radioConfig={radioConfig} onSelectPreset={(preset: LoRaPreset) => setRadioConfig(RADIO_PRESETS[preset])} packetLossPct={packetLossPct} onChangeLossPct={setPacketLossPct} simSpeedMultiplier={simSpeedMultiplier} onChangeSimSpeed={setSimSpeedMultiplier} onTriggerDemoScenario={triggerScenario} onResetSimulation={reset} isTransmitting={isTransmitting} isPaused={isPaused} onTogglePause={() => setIsPaused(value => !value)} /></div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: 'Radio transmissions', value: totalSent, icon: Radio, color: 'text-cyan-300' },
+              { label: 'Completed packet routes', value: totalDelivered, icon: Check, color: 'text-emerald-300' },
+              { label: 'Lost attempts', value: totalDropped, icon: TriangleAlert, color: 'text-rose-300' },
+              { label: 'Parity recoveries', value: fecRecoveries, icon: Shield, color: 'text-violet-300' },
+            ].map(stat => <div key={stat.label} className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 flex items-center gap-2"><stat.icon className={`w-3.5 h-3.5 ${stat.color}`} /><div><div className="text-base font-mono text-white">{stat.value}</div><div className="text-[9px] text-slate-400">{stat.label}</div></div></div>)}
           </div>
-
-          {/* 2. Physical Layer Controls & 1-Click Scenarios for Judges */}
-          <div id="survival">
-            <NetworkControls
-              radioConfig={radioConfig}
-              onSelectPreset={(p) => setRadioConfig(RADIO_PRESETS[p])}
-              packetLossPct={packetLossPct}
-              onChangeLossPct={(pct) => setPacketLossPct(pct)}
-              simSpeedMultiplier={simSpeedMultiplier}
-              onChangeSimSpeed={(spd) => setSimSpeedMultiplier(spd)}
-              onTriggerDemoScenario={handleTriggerDemoScenario}
-              onResetSimulation={handleResetSimulation}
-              isTransmitting={isTransmitting}
-            />
-          </div>
-
-          {/* 3. Live Packet Tracer & ARQ Telemetry Stream */}
-          <div id="status">
-            <PacketTracer
-              activePackets={activePackets}
-              eventLogs={eventLogs}
-              totalSent={totalSent}
-              totalDelivered={totalDelivered}
-              totalDropped={totalDropped}
-              fecRecoveries={fecRecoveries}
-              nodes={nodes}
-            />
-          </div>
-        </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 flex justify-between text-[10px] text-slate-400"><span className="flex items-center gap-1.5"><Activity className="w-3 h-3 text-amber-300" />Total radio bytes across all hops</span><span className="font-mono text-white">{radioBytes.toLocaleString()} B</span></div>
+          <div id="telemetry"><PacketTracer activePackets={activePackets} eventLogs={eventLogs} totalSent={totalSent} totalDelivered={totalDelivered} totalDropped={totalDropped} fecRecoveries={fecRecoveries} nodes={nodes} /></div>
+          <div className="rounded-xl border border-cyan-900/60 bg-cyan-950/20 p-3 flex gap-2 text-[10px] leading-relaxed text-slate-300"><Info className="w-4 h-4 text-cyan-300 shrink-0" /><span>Audio uses the real Codec2 encoder and decoder loaded locally on first use. Images are real WebP files. Video is sent as timestamped WebP keyframes, not as continuous full‑motion video. A sender sees “Delivered” only after receiver reassembly, integrity verification, decoding, and a returned receipt.</span></div>
+        </section>
       </main>
 
-      {/* Route & Telemetry Inspector Modal */}
-      <RouteInspectorModal
-        message={inspectedMessage}
-        nodes={nodes}
-        onClose={() => setInspectedMessage(null)}
-      />
-
-      {/* Clean Unboxed Editorial Footer */}
-      <footer className="mt-auto border-t border-slate-900 bg-slate-950 px-6 py-4 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span>CHRP Off-Grid Mesh Architecture</span>
-          <span aria-hidden="true">·</span>
-          <span>LoRa MTU 230 Bytes</span>
-          <span aria-hidden="true">·</span>
-          <span>Zero Cellular / Zero WiFi</span>
-        </div>
-        <div className="text-slate-400 font-mono text-[11px]">
-          Honest Delivery Status Protocol Verified
-        </div>
-      </footer>
+      <RouteInspectorModal message={inspectedMessage} nodes={nodes} onClose={() => setInspectedMessage(null)} />
+      <footer className="mt-auto border-t border-slate-900 bg-slate-950 px-6 py-3 text-[10px] text-slate-500 flex items-center justify-between"><span className="flex items-center gap-2"><Waves className="w-3 h-3" />Simulated LoRa · 230-byte MTU · six nodes</span><span>{radioConfig.bitrateBps.toLocaleString()} bps · {simSpeedMultiplier}× simulation speed</span></footer>
     </div>
   );
 }

@@ -1,240 +1,126 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MessageType } from '../types/mesh';
-import { PRESET_VOICE_NOTES } from '../utils/audioCodec';
+import { Codec2Mode, PRESET_VOICE_NOTES } from '../utils/audioCodec';
 import { PRESET_PHOTOS } from '../utils/imageCodec';
-import {
-  Send,
-  Mic,
-  Image as ImageIcon,
-  Shield,
-  Radio,
-  FileText,
-  ChevronUp,
-  X,
-  Volume2,
-} from 'lucide-react';
+import { Image as ImageIcon, LoaderCircle, Mic, Paperclip, Radio, Send, Shield, Square, Video, X } from 'lucide-react';
+
+export interface SendMessageParams {
+  type: MessageType;
+  text: string;
+  codecMode?: Codec2Mode;
+  audioBlob?: Blob;
+  imageBlob?: Blob;
+  imageName?: string;
+  videoBlob?: Blob;
+  useFec: boolean;
+}
 
 interface MessageComposerProps {
-  onSendMessage: (params: {
-    type: MessageType;
-    text: string;
-    audioPresetId?: string;
-    photoPresetId?: string;
-    customPhotoUrl?: string;
-    useFec: boolean;
-  }) => void;
+  onSendMessage: (params: SendMessageParams) => Promise<void>;
   isTransmitting: boolean;
   recipientCallsign: string;
 }
 
-export const MessageComposer: React.FC<MessageComposerProps> = ({
-  onSendMessage,
-  isTransmitting,
-  recipientCallsign,
-}) => {
+export const MessageComposer: React.FC<MessageComposerProps> = ({ onSendMessage, isTransmitting, recipientCallsign }) => {
   const [inputText, setInputText] = useState('');
-  const [activeMediaTab, setActiveMediaTab] = useState<'none' | 'voice' | 'photo'>('none');
-  const [selectedVoicePreset, setSelectedVoicePreset] = useState<string>(PRESET_VOICE_NOTES[0].id);
-  const [selectedPhotoPreset, setSelectedPhotoPreset] = useState<string>(PRESET_PHOTOS[0].id);
-  const [useFec, setUseFec] = useState<boolean>(true); // Default ON to show robust network survival!
+  const [mode, setMode] = useState<Codec2Mode>('700');
+  const [useFec, setUseFec] = useState(true);
+  const [recording, setRecording] = useState(false);
+  const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
+  const [localError, setLocalError] = useState('');
+  const [sending, setSending] = useState(false);
+  const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioParts = useRef<BlobPart[]>([]);
+  const timerRef = useRef<number | undefined>(undefined);
+  const photoInput = useRef<HTMLInputElement>(null);
+  const videoInput = useRef<HTMLInputElement>(null);
+  const audioInput = useRef<HTMLInputElement>(null);
 
-  const handleSendText = () => {
-    if (!inputText.trim() || isTransmitting) return;
-    onSendMessage({
-      type: 'text',
-      text: inputText.trim(),
-      useFec,
-    });
-    setInputText('');
+  useEffect(() => () => {
+    window.clearTimeout(timerRef.current);
+    streamRef.current?.getTracks().forEach(track => track.stop());
+  }, []);
+
+  const send = async (payload: SendMessageParams): Promise<boolean> => {
+    setLocalError(''); setSending(true);
+    try { await onSendMessage(payload); return true; }
+    catch (error) { setLocalError(error instanceof Error ? error.message : 'Could not prepare this message.'); return false; }
+    finally { setSending(false); }
   };
 
-  const handleSendVoice = () => {
-    if (isTransmitting) return;
-    const preset = PRESET_VOICE_NOTES.find(p => p.id === selectedVoicePreset) || PRESET_VOICE_NOTES[0];
-    onSendMessage({
-      type: 'voice',
-      text: preset.transcript,
-      audioPresetId: preset.id,
-      useFec,
-    });
-    setActiveMediaTab('none');
+  const startRecording = async () => {
+    setLocalError(''); setRecordedAudio(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      streamRef.current = stream; audioParts.current = [];
+      const mimeType = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorder.current = recorder;
+      recorder.ondataavailable = event => { if (event.data.size) audioParts.current.push(event.data); };
+      recorder.onstop = () => {
+        setRecordedAudio(new Blob(audioParts.current, { type: recorder.mimeType || 'audio/webm' }));
+        stream.getTracks().forEach(track => track.stop()); streamRef.current = null; setRecording(false);
+      };
+      recorder.start(200); setRecording(true);
+      timerRef.current = window.setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 20000);
+    } catch (error) { setLocalError(error instanceof Error ? error.message : 'Microphone access is unavailable.'); }
   };
 
-  const handleSendPhoto = () => {
-    if (isTransmitting) return;
-    const preset = PRESET_PHOTOS.find(p => p.id === selectedPhotoPreset) || PRESET_PHOTOS[0];
-    onSendMessage({
-      type: 'image',
-      text: preset.description,
-      photoPresetId: preset.id,
-      customPhotoUrl: preset.imageUrl,
-      useFec,
-    });
-    setActiveMediaTab('none');
+  const stopRecording = () => {
+    window.clearTimeout(timerRef.current);
+    if (mediaRecorder.current?.state === 'recording') mediaRecorder.current.stop();
   };
+
+  const sendVoice = async (blob?: Blob) => {
+    const payload = blob ?? recordedAudio;
+    if (!payload) { setLocalError('Record a voice note or choose an audio file first.'); return; }
+    if (await send({ type: 'voice', text: inputText.trim(), codecMode: mode, audioBlob: payload, useFec })) { setRecordedAudio(null); setInputText(''); }
+  };
+
+  const sendImage = async (blob: Blob, name: string) => {
+    if (await send({ type: 'image', text: inputText.trim() || name, imageBlob: blob, imageName: name, useFec })) setInputText('');
+  };
+
+  const busy = isTransmitting || sending;
 
   return (
     <div className="relative border-t border-slate-800 bg-slate-950/95 p-3 flex flex-col gap-2">
-      {/* Media Tray Drawer (Slide-up when Voice or Photo tab active) */}
-      {activeMediaTab !== 'none' && (
-        <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-3 animate-in fade-in duration-150">
-          <div className="flex items-center justify-between">
-            <span className="text-xs uppercase font-mono font-semibold text-amber-400">
-              {activeMediaTab === 'voice' ? 'Micro-Speech Voice Encoder' : 'Progressive Recon Photo Encoder'}
-            </span>
-            <button
-              onClick={() => setActiveMediaTab('none')}
-              className="p-1 text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Voice Presets */}
-          {activeMediaTab === 'voice' && (
-            <div className="space-y-2">
-              <div className="text-[11px] text-slate-300">
-                Encodes speech using Codec2 / LPC Formants into <strong className="text-amber-400">two 230-byte LoRa packets (460B)</strong>.
-              </div>
-              <div className="grid grid-cols-1 gap-1.5">
-                {PRESET_VOICE_NOTES.map((preset) => (
-                  <button
-                    key={preset.id}
-                    onClick={() => setSelectedVoicePreset(preset.id)}
-                    className={`p-2 rounded-lg text-left text-xs transition-colors border ${
-                      selectedVoicePreset === preset.id
-                        ? 'bg-amber-950/50 border-amber-600 text-white'
-                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between font-semibold">
-                      <span>{preset.title}</span>
-                      <span className="text-[10px] font-mono text-amber-400">{preset.durationSec}s</span>
-                    </div>
-                    <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                      "{preset.transcript}"
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={handleSendVoice}
-                disabled={isTransmitting}
-                className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-50"
-              >
-                <Radio className="w-3.5 h-3.5" />
-                <span>Compress & Transmit Voice Note (460 Bytes)</span>
-              </button>
-            </div>
-          )}
-
-          {/* Photo Presets */}
-          {activeMediaTab === 'photo' && (
-            <div className="space-y-2">
-              <div className="text-[11px] text-slate-300">
-                Squeezes 1.2MB image into <strong className="text-cyan-400">4 progressive chunks of 230 bytes (920B)</strong>.
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {PRESET_PHOTOS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    onClick={() => setSelectedPhotoPreset(preset.id)}
-                    className={`relative rounded-lg overflow-hidden border p-1 text-left transition-colors ${
-                      selectedPhotoPreset === preset.id
-                        ? 'border-cyan-400 ring-1 ring-cyan-400 bg-slate-800'
-                        : 'border-slate-800 bg-slate-950 hover:border-slate-700'
-                    }`}
-                  >
-                    <img
-                      src={preset.imageUrl}
-                      alt={preset.title}
-                      className="w-full h-16 object-cover rounded"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="text-[10px] font-semibold text-white mt-1 truncate">
-                      {preset.title}
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={handleSendPhoto}
-                disabled={isTransmitting}
-                className="w-full py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-md shadow-cyan-500/20 disabled:opacity-50"
-              >
-                <Radio className="w-3.5 h-3.5" />
-                <span>Compress & Transmit Progressive Photo (920 Bytes)</span>
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Options Row (FEC toggle & Media buttons) */}
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setActiveMediaTab(activeMediaTab === 'voice' ? 'none' : 'voice')}
-            className={`px-2 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1 transition-colors ${
-              activeMediaTab === 'voice'
-                ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
-            }`}
-          >
-            <Mic className="w-3 h-3 text-amber-400" />
-            <span>Voice</span>
-          </button>
-
-          <button
-            onClick={() => setActiveMediaTab(activeMediaTab === 'photo' ? 'none' : 'photo')}
-            className={`px-2 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1 transition-colors ${
-              activeMediaTab === 'photo'
-                ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300'
-                : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
-            }`}
-          >
-            <ImageIcon className="w-3 h-3 text-cyan-400" />
-            <span>Photo</span>
-          </button>
-        </div>
-
-        {/* FEC Parity Checkbox Button */}
-        <button
-          onClick={() => setUseFec(!useFec)}
-          title="Forward Error Correction adds 1 parity packet for single-packet instant recovery without ARQ round-trip delay"
-          className={`px-2 py-0.5 rounded text-[10px] font-mono border flex items-center gap-1 transition-colors ${
-            useFec
-              ? 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
-              : 'bg-slate-900 border-slate-800 text-slate-400'
-          }`}
-        >
-          <Shield className="w-3 h-3 text-emerald-400" />
-          <span>FEC Parity: {useFec ? 'ON' : 'OFF'}</span>
+      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+        <span>OFF GRID · TO {recipientCallsign}</span>
+        <button onClick={() => setUseFec(!useFec)} aria-pressed={useFec} className={`inline-flex items-center gap-1 rounded border px-2 py-1 ${useFec ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-slate-800 text-slate-400'}`}>
+          <Shield className="w-3 h-3" /> XOR recovery {useFec ? 'on' : 'off'}
         </button>
       </div>
 
-      {/* Main Text Input Field & Send Trigger */}
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSendText();
-          }}
-          placeholder={`Direct message to ${recipientCallsign}...`}
-          disabled={isTransmitting}
-          className="flex-1 px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/60 transition-colors disabled:opacity-50"
-        />
+      <input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void sendVoice(file); event.target.value = ''; }} />
+      <input ref={photoInput} type="file" accept="image/*" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void sendImage(file, file.name); event.target.value = ''; }} />
+      <input ref={videoInput} type="file" accept="video/*" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void send({ type: 'video_burst', text: inputText.trim() || file.name, videoBlob: file, useFec }); event.target.value = ''; }} />
 
-        <button
-          onClick={handleSendText}
-          disabled={!inputText.trim() || isTransmitting}
-          className="w-8 h-8 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-md shadow-amber-500/20"
-        >
-          <Send className="w-4 h-4" />
+      <div className="flex items-center gap-1.5">
+        <button onClick={() => void (recording ? stopRecording() : startRecording())} disabled={busy} title={recording ? 'Stop recording' : 'Record a voice note'} className={`w-8 h-8 rounded-lg flex items-center justify-center ${recording ? 'bg-rose-600 text-white animate-pulse' : 'bg-amber-500 text-slate-950'} disabled:opacity-40`}>
+          {recording ? <Square className="w-3 h-3 fill-current" /> : <Mic className="w-4 h-4" />}
         </button>
+        <button onClick={() => audioInput.current?.click()} disabled={busy} className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-amber-300 disabled:opacity-40" title="Choose audio"><Paperclip className="w-3.5 h-3.5" /></button>
+        <button onClick={() => photoInput.current?.click()} disabled={busy} className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-cyan-300 disabled:opacity-40" title="Choose photo"><ImageIcon className="w-3.5 h-3.5" /></button>
+        <button onClick={() => videoInput.current?.click()} disabled={busy} className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-violet-300 disabled:opacity-40" title="Choose video for keyframe burst"><Video className="w-3.5 h-3.5" /></button>
+        <select aria-label="Voice codec bitrate" value={mode} onChange={event => setMode(event.target.value as Codec2Mode)} className="h-8 flex-1 min-w-0 rounded-lg bg-slate-900 border border-slate-800 px-2 text-[10px] text-slate-200" disabled={busy}>
+          {PRESET_VOICE_NOTES.map(preset => <option key={preset.id} value={preset.mode}>{preset.title}</option>)}
+        </select>
       </div>
+
+      {recordedAudio && <div className="flex items-center justify-between rounded-lg bg-amber-950/30 border border-amber-900/60 px-2.5 py-1.5 text-[10px] text-amber-200">
+        <span>Recording ready · {(recordedAudio.size / 1024).toFixed(1)} KB source</span>
+        <div className="flex gap-2"><button disabled={busy} onClick={() => void sendVoice()} className="font-bold disabled:opacity-50">Compress & send</button><button onClick={() => setRecordedAudio(null)} aria-label="Discard recording"><X className="w-3 h-3" /></button></div>
+      </div>}
+
+      <div className="flex gap-2">
+        <input value={inputText} onChange={event => setInputText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && inputText.trim()) void send({ type: 'text', text: inputText.trim(), useFec }); }} placeholder="Message or optional media caption…" disabled={busy} className="flex-1 min-w-0 px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/60 disabled:opacity-50" />
+        <button onClick={() => void send({ type: 'text', text: inputText.trim(), useFec })} disabled={!inputText.trim() || busy} title="Send text" className="w-9 h-9 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center disabled:opacity-30"><Send className="w-4 h-4" /></button>
+      </div>
+
+      {(recording || busy) && <div className="text-[10px] text-amber-300 font-mono flex items-center gap-1.5">{busy && <LoaderCircle className="w-3 h-3 animate-spin" />}{recording ? 'Recording · 20 second limit' : 'Preparing or transmitting media…'}</div>}
+      {localError && <div role="alert" className="text-[10px] text-rose-300">{localError}</div>}
     </div>
   );
 };
