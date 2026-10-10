@@ -1,4 +1,4 @@
-# Chrp · Off-grid messaging simulator
+# SkyWire · Off-grid messaging simulator
 
 An iPhone-style demo that transports **actual text, Opus audio, progressive thumbnail pixels, and video keyframes** over a six-node simulated mesh. The default source-to-base route crosses three hops.
 
