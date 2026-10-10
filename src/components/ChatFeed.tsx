@@ -43,7 +43,7 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({ messages, nodes, onOpenRoute
   }, [messages]);
   useEffect(() => () => mediaUrls.current.forEach(URL.revokeObjectURL), []);
   return <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3.5 scroll-smooth">
-    <div className="text-center"><span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[9px] font-mono text-slate-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />LOCAL MESH · {onlineRelays} NODES ONLINE</span></div>
+    <div className="text-center"><span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-800 text-[10px] font-medium tracking-wide text-slate-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />{onlineRelays} mesh nodes online</span></div>
     {!messages.length && <div className="h-40 flex flex-col items-center justify-center text-center px-4 text-slate-400"><MapPinned className="w-7 h-7 text-amber-400/60 mb-2" /><div className="text-xs font-semibold text-white">Nothing sent yet</div><p className="text-[10px] leading-relaxed mt-1 max-w-[230px]">Record a voice note, choose a photo or clip, or send a text. The preview appears after the receiver has the bytes.</p></div>}
     {messages.map(message => {
       const progress = message.totalPackets ? Math.min(1, message.packetsReceived / message.totalPackets) : 0;

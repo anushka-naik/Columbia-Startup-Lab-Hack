@@ -1,38 +1,135 @@
 @import "tailwindcss";
 
+@theme {
+  /* Tailwind color tokens are tuned to a native Apple light appearance. */
+  --color-slate-50: #000000;
+  --color-slate-100: #1d1d1f;
+  --color-slate-200: #2c2c2e;
+  --color-slate-300: #48484a;
+  --color-slate-400: #6e6e73;
+  --color-slate-500: #86868b;
+  --color-slate-600: #aeaeb2;
+  --color-slate-700: #d2d2d7;
+  --color-slate-800: #e5e5ea;
+  --color-slate-900: #ffffff;
+  --color-slate-950: #f5f5f7;
+
+  /* Blue is the primary interaction color throughout iOS. */
+  --color-cyan-300: #4b9cff;
+  --color-cyan-400: #007aff;
+  --color-cyan-500: #0071e3;
+  --color-cyan-600: #0066cc;
+  --color-cyan-700: #005bb5;
+  --color-cyan-800: #cce4ff;
+  --color-cyan-900: #e5f2ff;
+  --color-cyan-950: #f0f7ff;
+
+  --color-amber-300: #ffb340;
+  --color-amber-400: #007aff;
+  --color-amber-500: #0071e3;
+  --color-amber-600: #0066cc;
+  --color-amber-800: #cce4ff;
+  --color-amber-900: #e5f2ff;
+  --color-amber-950: #f0f7ff;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+
 @layer base {
   :root {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: #1d1d1f;
+    background: #f5f5f7;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "ss01" on;
   }
-  
-  .font-mono, code, kbd, samp, pre {
-    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-    font-feature-settings: "tnum" on, "zero" on;
+
+  body {
+    min-width: 360px;
+    min-height: 100vh;
+    margin: 0;
+    background: #f5f5f7;
+    overflow-x: hidden;
+  }
+
+  button, input, select, textarea {
+    font: inherit;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button, input, select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 3px solid rgb(0 122 255 / 32%);
+    outline-offset: 2px;
   }
 }
 
-/* Custom subtle scrollbars for dense telemetry feeds */
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+/* Subtle scrollbars and soft physical controls. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c7c7cc; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #aeaeb2; }
+
+button:not(:disabled) { transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
+button:not(:disabled):active { transform: scale(.98); }
+[class~="text-[9px]"] { font-size: 10px !important; }
+[class~="text-[8px]"] { font-size: 9px !important; }
+[class~="rounded-2xl"][class*="border"], [class~="rounded-xl"][class*="border"] {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
 }
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+
+/* Bring the existing utility-based UI into a consistent, soft-surface system. */
+[class~="bg-slate-950"], [class*="bg-slate-950/"] { background-color: #f5f5f7 !important; }
+[class~="bg-slate-900"], [class*="bg-slate-900/"] { background-color: #ffffff !important; }
+[class~="bg-slate-800"], [class*="bg-slate-800/"] { background-color: #f0f0f2 !important; }
+[class~="bg-slate-700"], [class*="bg-slate-700/"] { background-color: #e5e5ea !important; }
+[class~="text-slate-950"] { color: #1d1d1f !important; }
+[class~="text-white"] { color: #1d1d1f !important; }
+[class~="border-slate-950"] { border-color: #d2d2d7 !important; }
+
+/* A real black Dynamic Island and image overlays retain their high contrast. */
+[class~="bg-black"] { background-color: #000 !important; }
+[class~="bg-black"] [class~="text-slate-300"],
+[class~="bg-black"] [class~="text-white"],
+[class*="from-slate-950"] [class~="text-white"] { color: #f5f5f7 !important; }
+[class*="from-slate-950"] { --tw-gradient-from: #000 !important; }
+
+/* Primary actions, selected presets, and transmit indicators use system blue. */
+[class~="bg-amber-400"], [class~="bg-amber-500"], [class~="bg-cyan-600"], [class~="bg-indigo-600"] {
+  background-color: #007aff !important;
 }
-::-webkit-scrollbar-thumb {
-  background: rgba(71, 85, 105, 0.5);
-  border-radius: 9999px;
+[class~="bg-amber-400"][class~="text-slate-950"], [class~="bg-amber-500"][class~="text-slate-950"],
+[class~="bg-indigo-600"][class~="text-white"] { color: #fff !important; }
+[class~="text-amber-300"], [class~="text-amber-400"], [class~="text-cyan-300"], [class~="text-cyan-400"] { color: #007aff !important; }
+[class~="border-amber-400"], [class~="border-amber-500"], [class~="border-cyan-400"] { border-color: #007aff !important; }
+[class~="ring-amber-400\/40"], [class~="ring-cyan-400\/40"] { --tw-ring-color: rgb(0 122 255 / 20%) !important; }
+
+/* Keep colored system status badges legible on their newly light surfaces. */
+[class*="bg-emerald-950"], [class*="bg-emerald-900"], [class*="bg-rose-950"], [class*="bg-rose-900"],
+[class*="bg-violet-950"], [class*="bg-indigo-950"], [class*="bg-cyan-950"], [class*="bg-amber-950"] {
+  background-color: #f2f4f7 !important;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.8);
-}
+[class~="text-emerald-300"], [class~="text-emerald-400"] { color: #248a3d !important; }
+[class~="text-rose-300"], [class~="text-rose-400"] { color: #d70015 !important; }
+[class~="text-violet-300"], [class~="text-indigo-300"], [class~="text-indigo-400"] { color: #5856d6 !important; }
 
 @keyframes radio-pulse {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.05); opacity: 0.3; }
-  100% { transform: scale(0.95); opacity: 0.8; }
+  0% { transform: scale(.95); opacity: .8; }
+  50% { transform: scale(1.05); opacity: .3; }
+  100% { transform: scale(.95); opacity: .8; }
 }
+.animate-radio-pulse { animation: radio-pulse 2s infinite ease-in-out; }
 
-.animate-radio-pulse {
-  animation: radio-pulse 2s infinite ease-in-out;
+@media (max-width: 640px) {
+  body { min-width: 320px; }
 }

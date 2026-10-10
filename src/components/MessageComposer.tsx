@@ -109,9 +109,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({ onSendMessage,
         </select>
       </div>
 
-      {recordedAudio && <div className="flex items-center justify-between rounded-lg bg-amber-950/30 border border-amber-900/60 px-2.5 py-1.5 text-[10px] text-amber-200">
+      {recordedAudio && <div className="flex items-center justify-between rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-[10px] font-medium text-slate-200">
         <span>Recording ready · {(recordedAudio.size / 1024).toFixed(1)} KB source</span>
-        <div className="flex gap-2"><button disabled={busy} onClick={() => void sendVoice()} className="font-bold disabled:opacity-50">Compress & send</button><button onClick={() => setRecordedAudio(null)} aria-label="Discard recording"><X className="w-3 h-3" /></button></div>
+        <div className="flex items-center gap-3"><button disabled={busy} onClick={() => void sendVoice()} className="font-semibold text-cyan-600 disabled:opacity-50">Compress & send</button><button onClick={() => setRecordedAudio(null)} aria-label="Discard recording" className="text-slate-400 hover:text-slate-200"><X className="w-3.5 h-3.5" /></button></div>
       </div>}
 
       <div className="flex gap-2">

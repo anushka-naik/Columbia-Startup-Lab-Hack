@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MeshLink, MeshNode, LoRaPacket } from '../types/mesh';
 import {
   Radio,
@@ -32,6 +32,18 @@ export const MeshMap: React.FC<MeshMapProps> = ({
 }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [showTopoLines, setShowTopoLines] = useState(true);
+  const [mapScale, setMapScale] = useState({ scale: 1, offsetY: 0 });
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      const scale = Math.min(entry.contentRect.width / 760, entry.contentRect.height / 380);
+      setMapScale({ scale, offsetY: (entry.contentRect.height - 380 * scale) / 2 });
+    });
+    resizeObserver.observe(map);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   // Helper to determine if link is part of current active route
   const isLinkInActiveRoute = (fromId: string, toId: string) => {
@@ -52,7 +64,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
       className="relative w-full h-[380px] bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden select-none"
     >
       {/* Topographic Background Contour Lines Grid (SVG) */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-25">
+      <svg viewBox="0 0 760 380" preserveAspectRatio="xMidYMid meet" className="absolute inset-0 w-full h-full pointer-events-none opacity-25">
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#334155" strokeWidth="0.5" />
@@ -72,7 +84,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
             <circle cx="390" cy="90" r="45" />
 
             {/* Canyon Depression Valley */}
-            <path d="M 120 300 Q 300 240 500 320 Q 650 360 750 310" stroke="#38bdf8" strokeWidth="0.8" strokeDasharray="4 2" />
+            <path d="M 120 300 Q 300 240 500 320 Q 650 360 750 310" stroke="#5ac8fa" strokeWidth="0.8" strokeDasharray="4 2" />
           </g>
         )}
       </svg>
@@ -99,7 +111,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
       </div>
 
       {/* Mesh Radio Links Lines (SVG) */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+      <svg viewBox="0 0 760 380" preserveAspectRatio="xMidYMid meet" className="absolute inset-0 w-full h-full pointer-events-none z-10">
         {links.map((link, idx) => {
           const fromNode = nodes.find(n => n.id === link.fromNodeId);
           const toNode = nodes.find(n => n.id === link.toNodeId);
@@ -108,12 +120,12 @@ export const MeshMap: React.FC<MeshMapProps> = ({
           const isActiveHop = isLinkInActiveRoute(fromNode.id, toNode.id);
           const isBothOnline = fromNode.isOnline && toNode.isOnline;
 
-          let strokeColor = '#334155'; // offline
+          let strokeColor = '#c7c7cc'; // offline
           if (isBothOnline) {
-            if (isActiveHop) strokeColor = '#f59e0b'; // active hop amber
-            else if (link.rssiDbm > -90) strokeColor = '#10b981'; // strong green
-            else if (link.rssiDbm > -105) strokeColor = '#06b6d4'; // medium cyan
-            else strokeColor = '#f43f5e'; // weak red
+            if (isActiveHop) strokeColor = '#007aff'; // active hop blue
+            else if (link.rssiDbm > -90) strokeColor = '#34c759'; // strong green
+            else if (link.rssiDbm > -105) strokeColor = '#5ac8fa'; // medium cyan
+            else strokeColor = '#ff3b30'; // weak red
           }
 
           const midX = (fromNode.x + toNode.x) / 2;
@@ -138,7 +150,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
                 <text
                   x={midX}
                   y={midY - 4}
-                  fill="#94a3b8"
+                fill="#6e6e73"
                   fontSize="9"
                   fontFamily="JetBrains Mono, monospace"
                   textAnchor="middle"
@@ -162,7 +174,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
               {/* Animated radio pulse circle along the vector */}
               <circle
                 r="6"
-                fill="#fbbf24"
+                fill="#4b9cff"
                 className="animate-ping"
                 style={{
                   cx: (fromNode.x + toNode.x) / 2,
@@ -173,7 +185,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
                 cx={(fromNode.x + toNode.x) / 2}
                 cy={(fromNode.y + toNode.y) / 2}
                 r="4"
-                fill="#f59e0b"
+                fill="#007aff"
                 stroke="#ffffff"
                 strokeWidth="1.5"
               />
@@ -191,7 +203,7 @@ export const MeshMap: React.FC<MeshMapProps> = ({
           return (
             <div
               key={node.id}
-              style={{ left: `${node.x}px`, top: `${node.y}px` }}
+              style={{ left: `${node.x * mapScale.scale}px`, top: `${mapScale.offsetY + node.y * mapScale.scale}px` }}
               className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto flex flex-col items-center group cursor-pointer"
               onClick={() => onSelectNode(node)}
             >
