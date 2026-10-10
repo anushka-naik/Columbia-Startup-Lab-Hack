@@ -1,298 +1,45 @@
 import React, { useState } from 'react';
 import { MeshMessage, MeshNode } from '../types/mesh';
-import { playTacticalVoice } from '../utils/audioCodec';
-import {
-  Play,
-  Square,
-  Volume2,
-  CheckCheck,
-  Clock,
-  AlertTriangle,
-  Route,
-  ImageIcon,
-  Sparkles,
-  ShieldCheck,
-} from 'lucide-react';
-
-interface ChatFeedProps {
-  messages: MeshMessage[];
-  nodes: MeshNode[];
-  onOpenRouteInspector: (message: MeshMessage) => void;
-}
-
-export const ChatFeed: React.FC<ChatFeedProps> = ({
-  messages,
-  nodes,
-  onOpenRouteInspector,
-}) => {
-  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
-
-  const handlePlayAudio = (msg: MeshMessage) => {
-    if (!msg.audioData) return;
-    setPlayingAudioId(msg.id);
-    playTacticalVoice(
-      {
-        durationSec: msg.audioData.durationSec,
-        pitchTrack: [130, 135, 140, 138, 132, 128, 125],
-        transcript: msg.textPayload,
-      },
-      () => {
-        setPlayingAudioId(null);
-      }
-    );
-  };
-
-  return (
-    <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3.5 scroll-smooth">
-      {/* Off-Grid Channel Banner */}
-      <div className="text-center my-1">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          <span>DIRECT LORA POUCH MESH · AD-HOC ADDR 0x4B</span>
-        </div>
-      </div>
-
-      {messages.length === 0 ? (
-        <div className="h-64 flex flex-col items-center justify-center text-center px-4 text-slate-400">
-          <Route className="w-8 h-8 text-amber-400/60 mb-2" />
-          <div className="text-xs font-semibold text-white">No active transmissions yet</div>
-          <p className="text-[11px] text-slate-400 mt-1 max-w-[220px]">
-            Record a voice note or send a recon photo below to simulate LoRa packet compression & relay.
-          </p>
-        </div>
-      ) : (
-        messages.map((msg) => {
-          const isSender = msg.senderNodeId === 'node-alpha-01';
-          const isDelivered = msg.status === 'delivered_verified';
-          const isFailedOrLost = msg.status === 'packet_loss_recovering';
-
-          return (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${isSender ? 'items-end' : 'items-start'} max-w-full`}
-            >
-              {/* Message Header info */}
-              <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 px-1 mb-1">
-                <span className="font-semibold text-slate-300">{msg.senderCallsign}</span>
-                <span>→</span>
-                <span>{msg.receiverCallsign}</span>
-                <span>·</span>
-                <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-              </div>
-
-              {/* Bubble Body */}
-              <div
-                className={`w-[92%] sm:w-[86%] rounded-2xl p-3 border transition-all ${
-                  isSender
-                    ? 'bg-slate-900/90 border-slate-700/80 text-white shadow-lg'
-                    : 'bg-slate-900 border-slate-800 text-slate-100 shadow-md'
-                }`}
-              >
-                {/* 1. TEXT PAYLOAD */}
-                {msg.type === 'text' && (
-                  <p className="text-xs leading-relaxed text-slate-100 font-sans break-words">
-                    {msg.textPayload}
-                  </p>
-                )}
-
-                {/* 2. VOICE PAYLOAD */}
-                {msg.type === 'voice' && msg.audioData && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handlePlayAudio(msg)}
-                          disabled={msg.packetsReceived === 0}
-                          className="w-8 h-8 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center transition-transform active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-amber-500/20"
-                        >
-                          {playingAudioId === msg.id ? (
-                            <Square className="w-3.5 h-3.5 fill-current" />
-                          ) : (
-                            <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-                          )}
-                        </button>
-                        <div>
-                          <div className="text-xs font-semibold text-white flex items-center gap-1">
-                            <Volume2 className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Voice Note</span>
-                            <span className="text-[10px] font-mono text-slate-400">
-                              ({msg.audioData.durationSec.toFixed(1)}s)
-                            </span>
-                          </div>
-                          <div className="text-[10px] font-mono text-cyan-300">
-                            Codec2 700bps · LPC Formants
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="text-right text-[10px] font-mono text-slate-400">
-                        <div>{(msg.totalBytesRaw / 1024).toFixed(0)}KB → {msg.compressedBytes}B</div>
-                        <div className="text-emerald-400">99.0% saved</div>
-                      </div>
-                    </div>
-
-                    {/* Waveform Visualization Bars */}
-                    <div className="h-7 bg-slate-950/70 rounded-lg p-1.5 flex items-center justify-between gap-0.5 border border-slate-800/60 overflow-hidden">
-                      {msg.audioData.rawPcmWaveform.slice(0, 32).map((val, idx) => {
-                        const isChunkLoaded = idx < (msg.packetsReceived / msg.totalPackets) * 32;
-                        return (
-                          <div
-                            key={idx}
-                            style={{ height: `${Math.max(15, val * 100)}%` }}
-                            className={`w-1 rounded-full transition-all duration-300 ${
-                              isChunkLoaded
-                                ? 'bg-amber-400'
-                                : 'bg-slate-700/50'
-                            }`}
-                          />
-                        );
-                      })}
-                    </div>
-
-                    {msg.textPayload && (
-                      <div className="text-[11px] text-slate-300 italic bg-slate-950/40 p-2 rounded-lg border border-slate-800/40">
-                        "{msg.textPayload}"
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 3. IMAGE PAYLOAD (Progressive 4-Pass) */}
-                {msg.type === 'image' && msg.imageData && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <div className="flex items-center gap-1.5 font-semibold text-white">
-                        <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>{msg.imageData.description || 'Recon Photo'}</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-cyan-300">
-                        Pass {msg.imageData.currentPassIndex}/{msg.totalPackets}
-                      </span>
-                    </div>
-
-                    {/* Progressive Image Container */}
-                    <div className="relative w-full h-36 rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
-                      {msg.imageData.currentPassIndex === 0 ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 text-xs">
-                          <span className="animate-spin text-amber-400 mb-1">⏳</span>
-                          <span>Awaiting Chunk #1 base preview...</span>
-                        </div>
-                      ) : (
-                        <>
-                          <img
-                            src={
-                              msg.imageData.progressivePasses[
-                                Math.min(msg.imageData.currentPassIndex - 1, msg.imageData.progressivePasses.length - 1)
-                              ] || msg.imageData.originalUrl
-                            }
-                            alt="Progressive Recon"
-                            className={`w-full h-full object-cover transition-all duration-500 ${
-                              msg.imageData.currentPassIndex === 1
-                                ? 'filter blur-[3px] scale-105'
-                                : msg.imageData.currentPassIndex === 2
-                                ? 'filter blur-[1px]'
-                                : 'filter-none'
-                            }`}
-                            referrerPolicy="no-referrer"
-                          />
-
-                          {/* Tactical Scanline HUD Overlay */}
-                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-500/5 to-transparent pointer-events-none" />
-
-                          {/* Resolution Badge */}
-                          <div className="absolute top-2 left-2 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded text-[9px] font-mono text-cyan-300 border border-cyan-800/60">
-                            {msg.imageData.currentPassIndex === 1 && 'PASS 1 · 16x12 COARSE'}
-                            {msg.imageData.currentPassIndex === 2 && 'PASS 2 · 32x24 CHROMA'}
-                            {msg.imageData.currentPassIndex === 3 && 'PASS 3 · 64x48 DETAIL'}
-                            {msg.imageData.currentPassIndex >= 4 && 'PASS 4 · FULL RESOLUTION'}
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-                      <span>{(msg.totalBytesRaw / 1024).toFixed(0)} KB → {msg.compressedBytes} B</span>
-                      <span className="text-emerald-400">99.9% reduced</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* 4. CHUNK MATRIX BAR (Visual 230-byte Slots) */}
-                <div className="mt-2.5 pt-2 border-t border-slate-800/80">
-                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
-                    <span>
-                      Chunks: {msg.packetsReceived}/{msg.totalPackets} (230B MTU)
-                    </span>
-                    <span>
-                      {isDelivered ? (
-                        <span className="text-emerald-400 font-bold">100% ACK</span>
-                      ) : (
-                        <span className="text-amber-400">
-                          ETA {msg.etaSecondsRemaining}s
-                        </span>
-                      )}
-                    </span>
-                  </div>
-
-                  {/* Visual Chunk Slots */}
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {Array.from({ length: msg.totalPackets }).map((_, idx) => {
-                      const isChunkDelivered = msg.receivedChunks.has(idx);
-                      const isRetrying = isFailedOrLost && !isChunkDelivered;
-
-                      return (
-                        <div
-                          key={idx}
-                          className={`h-2 rounded-sm transition-all duration-300 ${
-                            isChunkDelivered
-                              ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50'
-                              : isRetrying
-                              ? 'bg-rose-500 animate-pulse'
-                              : idx === msg.packetsReceived
-                              ? 'bg-amber-400 animate-pulse'
-                              : 'bg-slate-800'
-                          }`}
-                          title={`Chunk #${idx} (230 bytes)`}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* 5. HONEST DELIVERY STATUS RIBBON */}
-                <div className="mt-2.5 flex items-center justify-between text-[10px]">
-                  <div className="flex items-center gap-1.5 font-mono">
-                    {isDelivered ? (
-                      <span className="flex items-center gap-1 text-emerald-400 font-bold">
-                        <CheckCheck className="w-3.5 h-3.5" />
-                        <span>DELIVERED & VERIFIED</span>
-                      </span>
-                    ) : isFailedOrLost ? (
-                      <span className="flex items-center gap-1 text-rose-400 font-bold animate-pulse">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        <span>RETRYING LOST CHUNKS</span>
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-amber-400 font-semibold">
-                        <Clock className="w-3.5 h-3.5 animate-spin" />
-                        <span>RELAYING IN TRANSIT</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => onOpenRouteInspector(msg)}
-                    className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-mono text-[10px] underline decoration-cyan-500/50 transition-colors"
-                  >
-                    <Route className="w-3 h-3" />
-                    <span>Inspect Route</span>
-                  </button>
-                </div>
-              </div>
+import { CheckCheck, Clock, Route, AlertTriangle, Radio } from 'lucide-react';
+export function ChatFeed({ messages, onOpenRouteInspector }: { messages: MeshMessage[]; nodes: MeshNode[]; onOpenRouteInspector: (m: MeshMessage) => void }) {
+  const [audioError, setAudioError] = useState('');
+  return <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5 bg-white scroll-smooth">
+    <p className="text-center text-[11px] text-zinc-500">Receiver view · only arrived bytes appear here</p>
+    {!messages.length && <div className="py-10 px-4 text-center"><Radio className="w-8 h-8 text-blue-500 mx-auto mb-3" /><h2 className="text-sm font-semibold">A fresh connection.</h2><p className="text-xs leading-relaxed text-zinc-500 mt-2">Send a note, record your voice, or share a photo. Watch it find its way to base camp.</p></div>}
+    {messages.map(msg => {
+      const delivered = msg.status === 'delivered_verified';
+      const failed = msg.status === 'failed' || msg.status === 'cancelled';
+      const savings = Math.max(0, (1 - msg.compressedBytes / Math.max(1, msg.totalBytesRaw)) * 100);
+      return <article key={msg.id} className="space-y-1.5">
+        <div className="px-1 text-[11px] text-zinc-500 flex justify-between"><span>You → Base camp</span><span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+        <div className="rounded-2xl bg-blue-50/70 border border-blue-100 p-3 space-y-3">
+          <div className="text-[11px] font-medium text-zinc-700">{msg.type === 'text' ? 'Message' : msg.type === 'voice' ? 'Voice note' : msg.type === 'video_burst' ? 'Video keyframes' : 'Photo'} <span className="text-zinc-400">· {msg.compressedBytes.toLocaleString()} B</span></div>
+          {msg.type === 'text' && <p className="text-sm leading-relaxed break-words">{msg.receivedText ?? 'Waiting for all text chunks…'}</p>}
+          {msg.type === 'voice' && <div className="space-y-2">
+            {msg.receivedAudioUrl ? <audio controls preload="metadata" src={msg.receivedAudioUrl} className="w-full h-10" onError={() => setAudioError('This browser cannot play the received codec. Download the verified audio below.')} /> : <div className="py-4 text-xs text-zinc-500 text-center">Audio unlocks after reassembly and checksum verification.</div>}
+            <p className="text-[10px] text-zinc-500">{msg.audioData?.durationSec.toFixed(1)} sec · {msg.codecLabel}</p>
+            {audioError && msg.receivedAudioUrl && <p className="text-xs text-rose-600">{audioError} <a href={msg.receivedAudioUrl} download="received-voice" className="underline">Download</a></p>}
+          </div>}
+          {msg.type === 'image' && <div className="space-y-2">
+            <div className="h-36 rounded-xl overflow-hidden bg-zinc-100 flex items-center justify-center">
+              {msg.receivedImageUrl ? <img src={msg.receivedImageUrl} alt={`Received ${msg.previewWidth} pixel thumbnail`} className="w-full h-full object-contain" style={{ imageRendering: 'pixelated' }} /> : <span className="text-xs text-zinc-500">Waiting for the first complete layer…</span>}
             </div>
-          );
-        })
-      )}
-    </div>
-  );
-};
+            <p className="text-[10px] text-zinc-500">{msg.previewWidth ? `${msg.previewWidth} × ${msg.previewWidth * 3 / 4} pixels received` : 'No image data decoded'} · lossy thumbnail</p>
+          </div>}
+          {msg.type === 'video_burst' && <div className="space-y-2"><div className="grid grid-cols-3 gap-1.5">{[0, 1, 2].map(i => <div key={i} className="bg-zinc-100 rounded-lg overflow-hidden">{msg.receivedVideoFrames?.[i] ? <><img src={msg.receivedVideoFrames[i].url} alt={`Received video frame ${i + 1}`} className="w-full aspect-[4/3] object-contain" style={{ imageRendering: 'pixelated' }} /><p className="text-center text-[10px] py-1">{(msg.receivedVideoFrames[i].timeMs / 1000).toFixed(1)}s</p></> : <div className="aspect-[4/3] flex items-center justify-center text-[10px] text-zinc-400">Waiting</div>}</div>)}</div><p className="text-[10px] text-zinc-500">{msg.receivedVideoFrames?.length ?? 0}/3 keyframes received · 32 × 24 each · no audio</p></div>}
+          {msg.type !== 'text' && <p className="text-[10px] text-zinc-500">{savings.toFixed(1)}% smaller than {msg.type === 'voice' ? '16 kHz mono PCM equivalent' : 'the source file'} · headers included</p>}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-[11px] text-zinc-500"><span>{msg.packetsReceived}/{msg.totalPackets} chunks received</span><span>{delivered ? 'Receipt confirmed' : failed ? 'Transfer stopped' : msg.receiverVerified ? 'Awaiting receipt' : `~${msg.etaSecondsRemaining}s at playback speed`}</span></div>
+            <div role="progressbar" aria-label="Chunks received" aria-valuemin={0} aria-valuemax={msg.totalPackets} aria-valuenow={msg.packetsReceived} className="h-1.5 rounded-full bg-blue-100 overflow-hidden"><div className="h-full bg-blue-500 transition-all" style={{ width: `${msg.packetsReceived / msg.totalPackets * 100}%` }} /></div>
+          </div>
+          <div className="flex justify-between gap-2 items-center text-[11px]">
+            <span className={`flex items-center gap-1 ${delivered ? 'text-emerald-700' : failed ? 'text-rose-600' : 'text-blue-600'}`}>{delivered ? <CheckCheck className="w-3.5 h-3.5" /> : failed ? <AlertTriangle className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}{delivered ? 'Delivered & verified' : failed ? 'Not confirmed' : msg.receiverVerified ? 'Received · unconfirmed' : 'In transit'}</span>
+            <button onClick={() => onOpenRouteInspector(msg)} className="flex items-center gap-1 text-blue-600 underline"><Route className="w-3 h-3" />Journey</button>
+          </div>
+          {failed && <p className="text-[11px] text-rose-600" role="status">{msg.statusDetail}</p>}
+          <details className="text-[11px] text-zinc-500"><summary className="cursor-pointer">Packet details</summary><div className="grid grid-cols-8 gap-1 mt-2">{Array.from({ length: msg.totalPackets }, (_, i) => <span key={i} title={`Chunk ${i + 1}: ${msg.receivedChunks.has(i) ? 'received' : 'missing'}`} className={`text-center rounded py-1 ${msg.receivedChunks.has(i) ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100'}`}>{i + 1}</span>)}</div><p className="mt-2">{(msg.wireBytes ?? 0).toLocaleString()} frame bytes across all hops · {msg.retransmittedPacketsCount} data retries</p></details>
+        </div>
+      </article>;
+    })}
+  </div>;
+}

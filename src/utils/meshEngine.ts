@@ -1,36 +1,10 @@
 /**
  * LoRa Mesh Simulator Engine
- * Implements hop-by-hop packet transmission, Selective Repeat ARQ,
- * FEC parity recovery, link physics (RSSI, SNR, latency), and truthful delivery tracking.
+ * Static illustrative topology, range-aware routing, and approximate airtime.
+ * The byte transport, ARQ and XOR recovery live in transport.ts and protocol.ts.
  */
 
-import {
-  LoRaPacket,
-  LoRaPreset,
-  MeshLink,
-  MeshMessage,
-  MeshNode,
-  RADIO_PRESETS,
-  RadioConfig,
-  RouteHopRecord,
-} from '../types/mesh';
-
-export interface SimulationState {
-  nodes: MeshNode[];
-  links: MeshLink[];
-  activePackets: LoRaPacket[]; // In-flight packets
-  messages: MeshMessage[];
-  radioConfig: RadioConfig;
-  globalLossRatePct: number; // 0 to 40%
-  simSpeedMultiplier: number; // 1x, 2x, 5x, 10x
-  isPaused: boolean;
-  totalPacketsSent: number;
-  totalPacketsDelivered: number;
-  totalPacketsDropped: number;
-  totalBytesTransmitted: number;
-  fecRecoveriesCount: number;
-  lastEventLog: string[];
-}
+import { MeshLink, MeshNode, RadioConfig } from '../types/mesh';
 
 export const INITIAL_NODES: MeshNode[] = [
   {
@@ -125,20 +99,20 @@ export const INITIAL_LINKS: MeshLink[] = [
   { fromNodeId: 'node-alpha-01', toNodeId: 'node-nomad-06', distanceKm: 2.7, rssiDbm: -88, snrDb: 4.8, baseLossPct: 10 },
   { fromNodeId: 'node-relay-02', toNodeId: 'node-relay-03', distanceKm: 2.8, rssiDbm: -98, snrDb: -1.5, baseLossPct: 20 },
   { fromNodeId: 'node-relay-02', toNodeId: 'node-solar-04', distanceKm: 1.9, rssiDbm: -79, snrDb: 8.2, baseLossPct: 5 },
-  { fromNodeId: 'node-solar-04', toNodeId: 'node-echo-05', distanceKm: 3.2, rssiDbm: -94, snrDb: 2.1, baseLossPct: 15 },
+  { fromNodeId: 'node-solar-04', toNodeId: 'node-relay-03', distanceKm: 3.2, rssiDbm: -94, snrDb: 2.1, baseLossPct: 15 },
   { fromNodeId: 'node-relay-03', toNodeId: 'node-echo-05', distanceKm: 2.4, rssiDbm: -89, snrDb: 4.0, baseLossPct: 12 },
   { fromNodeId: 'node-nomad-06', toNodeId: 'node-relay-03', distanceKm: 2.9, rssiDbm: -95, snrDb: 1.1, baseLossPct: 18 },
 ];
 
-export function findRoutePath(fromId: string, toId: string, nodes: MeshNode[], links: MeshLink[]): string[] {
-  // Dijkstra / BFS based on online nodes and link RSSI
+export function findRoutePath(fromId: string, toId: string, nodes: MeshNode[], links: MeshLink[], maxRangeKm = Infinity): string[] {
+  // Shortest-hop BFS over real links within the configured range and online endpoints.
   const onlineNodeIds = new Set(nodes.filter(n => n.isOnline).map(n => n.id));
-  if (!onlineNodeIds.has(fromId) || !onlineNodeIds.has(toId)) return [fromId, toId];
+  if (!onlineNodeIds.has(fromId) || !onlineNodeIds.has(toId)) return [];
 
   // Adjacency
   const adj: Record<string, string[]> = {};
   links.forEach(link => {
-    if (onlineNodeIds.has(link.fromNodeId) && onlineNodeIds.has(link.toNodeId)) {
+    if (link.distanceKm <= maxRangeKm && onlineNodeIds.has(link.fromNodeId) && onlineNodeIds.has(link.toNodeId)) {
       if (!adj[link.fromNodeId]) adj[link.fromNodeId] = [];
       if (!adj[link.toNodeId]) adj[link.toNodeId] = [];
       adj[link.fromNodeId].push(link.toNodeId);
@@ -163,8 +137,8 @@ export function findRoutePath(fromId: string, toId: string, nodes: MeshNode[], l
     }
   }
 
-  // Fallback default canonical path through Relay-02 and Relay-03
-  return [fromId, 'node-relay-02', 'node-relay-03', toId];
+  // Disconnection is a failure, never a fabricated route.
+  return [];
 }
 
 export function getLinkBetween(fromId: string, toId: string, links: MeshLink[]): MeshLink {
@@ -172,14 +146,7 @@ export function getLinkBetween(fromId: string, toId: string, links: MeshLink[]):
     l => (l.fromNodeId === fromId && l.toNodeId === toId) || (l.fromNodeId === toId && l.toNodeId === fromId)
   );
   if (found) return found;
-  return {
-    fromNodeId: fromId,
-    toNodeId: toId,
-    distanceKm: 2.5,
-    rssiDbm: -92,
-    snrDb: 3.0,
-    baseLossPct: 15,
-  };
+  throw new Error('No radio link between these nodes');
 }
 
 export function calculatePacketAirtimeMs(payloadBytes: number, radio: RadioConfig): number {

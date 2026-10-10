@@ -14,7 +14,7 @@ export interface RadioConfig {
 export const RADIO_PRESETS: Record<LoRaPreset, RadioConfig> = {
   short_fast: {
     preset: 'short_fast',
-    name: 'Short Fast (SF7, BW 250kHz)',
+    name: 'Fast (~22 kbps)',
     bitrateBps: 21880, // ~21.9 kbps
     bandwidthKhz: 250,
     spreadingFactor: 7,
@@ -24,7 +24,7 @@ export const RADIO_PRESETS: Record<LoRaPreset, RadioConfig> = {
   },
   medium_fast: {
     preset: 'medium_fast',
-    name: 'Medium Fast (SF9, BW 250kHz)',
+    name: 'Balanced (~5.5 kbps)',
     bitrateBps: 5470, // ~5.4 kbps
     bandwidthKhz: 250,
     spreadingFactor: 9,
@@ -34,7 +34,7 @@ export const RADIO_PRESETS: Record<LoRaPreset, RadioConfig> = {
   },
   long_fast: {
     preset: 'long_fast',
-    name: 'Long Fast (SF11, BW 250kHz)',
+    name: 'Long range (~1 kbps)',
     bitrateBps: 1070, // ~1.07 kbps
     bandwidthKhz: 250,
     spreadingFactor: 11,
@@ -44,7 +44,7 @@ export const RADIO_PRESETS: Record<LoRaPreset, RadioConfig> = {
   },
   extreme_slow: {
     preset: 'extreme_slow',
-    name: 'Extreme Long Slow (SF12, BW 125kHz)',
+    name: 'Deep range (250 bps)',
     bitrateBps: 250, // ~250 bps
     bandwidthKhz: 125,
     spreadingFactor: 12,
@@ -116,7 +116,10 @@ export type DeliveryStatus =
   | 'packet_loss_recovering'
   | 'partial_preview'
   | 'reassembling'
-  | 'delivered_verified';
+  | 'delivered_verified'
+  | 'awaiting_ack'
+  | 'failed'
+  | 'cancelled';
 
 export interface RouteHopRecord {
   fromNodeId: string;
@@ -137,6 +140,22 @@ export interface MeshMessage {
   timestamp: number;
   type: MessageType;
   textPayload?: string;
+  droppedTransmissions?: number;
+  fecRecovered?: number;
+  receivedVideoFrames?: { url: string; timeMs: number }[];
+  receivedText?: string;
+  receivedAudioUrl?: string;
+  receivedImageUrl?: string;
+  previewWidth?: number;
+  receiverVerified?: boolean;
+  wireBytes?: number;
+  dataWireBytes?: number;
+  parityWireBytes?: number;
+  controlWireBytes?: number;
+  retransmitWireBytes?: number;
+  radioAirtimeMs?: number;
+  transmissionCount?: number;
+  codecLabel?: string;
   // Audio metadata
   audioData?: {
     durationSec: number;
