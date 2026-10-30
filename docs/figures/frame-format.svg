@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" font-family="-apple-system, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <style>
+    .hd { font-size: 11px; letter-spacing: 1.4px; fill: #57606a; font-weight: 600; }
+    .f { fill: #ffffff; stroke: #24292f; stroke-width: 1.2; }
+    .n { font-size: 12px; fill: #1f2328; font-weight: 600; text-anchor: middle; }
+    .o { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; fill: #57606a; text-anchor: middle; }
+    .d { font-size: 11.5px; fill: #57606a; }
+    .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .br { stroke: #57606a; stroke-width: 1; fill: none; }
+  </style>
+  <rect x="0" y="0" width="1200" height="380" fill="#ffffff"/>
+
+  <!-- ===== (a) wire frame ===== -->
+  <text class="hd" x="40" y="32">(a) WIRE FRAME · ≤ 230 B</text>
+  <g>
+    <rect class="f" x="40"  y="62" width="40"  height="44"/><text class="n" x="60"  y="89">ver</text>
+    <rect class="f" x="80"  y="62" width="40"  height="44"/><text class="n" x="100" y="89">kind</text>
+    <rect class="f" x="120" y="62" width="160" height="44"/><text class="n" x="200" y="89">transfer id</text>
+    <rect class="f" x="280" y="62" width="80"  height="44"/><text class="n" x="320" y="89">seq</text>
+    <rect class="f" x="360" y="62" width="80"  height="44"/><text class="n" x="400" y="89">total</text>
+    <rect class="f" x="440" y="62" width="160" height="44"/><text class="n" x="520" y="89">payload length</text>
+    <rect class="f" x="600" y="62" width="80"  height="44"/><text class="n" x="640" y="89">msg CRC</text>
+    <rect class="f" x="680" y="62" width="80"  height="44" fill="#ddf4ff"/><text class="n" x="720" y="89">frame CRC</text>
+    <path class="f" d="M760 62 H1080 l8 11 l-8 11 l8 11 l-8 11 H760 z" fill="#f6f8fa"/>
+    <path class="f" d="M1096 62 H1160 V106 H1096 l8 -11 l-8 -11 l8 -11 z" fill="#f6f8fa"/>
+    <text class="n" x="920" y="89">body</text>
+  </g>
+  <g class="o">
+    <text x="40" y="56">0</text><text x="80" y="56">1</text><text x="120" y="56">2</text><text x="280" y="56">6</text>
+    <text x="360" y="56">8</text><text x="440" y="56">10</text><text x="600" y="56">14</text><text x="680" y="56">16</text>
+    <text x="760" y="56">18</text><text x="1160" y="56">≤ 230</text>
+  </g>
+  <path class="br" d="M40 116 v6 H760 v-6 M400 122 v6"/>
+  <text class="d" x="400" y="144" text-anchor="middle">header · <tspan class="m">18 B</tspan> · big-endian</text>
+  <path class="br" d="M760 116 v6 H1160 v-6 M960 122 v6"/>
+  <text class="d" x="960" y="144" text-anchor="middle">≤ <tspan class="m">212 B</tspan>: data chunk · XOR parity · ACK bitmap · empty probe</text>
+
+  <g class="d">
+    <text x="40" y="176"><tspan class="m">kind</tspan> ∈ {data, parity, probe, ack}.  <tspan class="m">total</tspan> = ⌈length / 212⌉ ≤ 256.  <tspan class="m">msg CRC</tspan> = CRC-16 of the whole reassembled payload, repeated in every frame.</text>
+    <text x="40" y="194"><tspan class="m">frame CRC</tspan> = CRC-16 over header bytes 0–15 and the body. Frames that fail either CRC, or disagree on transfer metadata, are rejected.</text>
+  </g>
+
+  <line x1="40" y1="222" x2="1160" y2="222" stroke="#d0d7de"/>
+
+  <!-- ===== (b) message payload ===== -->
+  <text class="hd" x="40" y="254">(b) MESSAGE PAYLOAD · LENGTH L</text>
+  <g>
+    <rect class="f" x="40"  y="284" width="30"  height="44"/><text class="n" x="55"  y="311" font-size="10.5">ver</text>
+    <rect class="f" x="70"  y="284" width="30"  height="44"/><text class="n" x="85"  y="311" font-size="10.5">kind</text>
+    <rect class="f" x="100" y="284" width="30"  height="44"/><text class="n" x="115" y="311" font-size="10.5">cdc</text>
+    <rect class="f" x="130" y="284" width="30"  height="44" fill="#f6f8fa"/>
+    <rect class="f" x="160" y="284" width="120" height="44"/><text class="n" x="220" y="311">duration ms</text>
+    <rect class="f" x="280" y="284" width="120" height="44"/><text class="n" x="340" y="311">raw bytes</text>
+    <rect class="f" x="400" y="284" width="120" height="44"/><text class="n" x="460" y="311">data length</text>
+    <rect class="f" x="520" y="284" width="640" height="44" fill="#f6f8fa"/><text class="n" x="840" y="311">encoded media (Ogg/Opus · RGB332 layers · keyframes · UTF-8)</text>
+  </g>
+  <g class="o">
+    <text x="40" y="278">0</text><text x="160" y="278">4</text><text x="280" y="278">8</text><text x="400" y="278">12</text><text x="520" y="278">16</text><text x="1160" y="278">L</text>
+  </g>
+  <path class="br" d="M40 338 v6 H520 v-6 M280 344 v6"/>
+  <text class="d" x="280" y="366" text-anchor="middle">media header · <tspan class="m">16 B</tspan></text>
+  <text class="d" x="840" y="352" text-anchor="middle">Split into ⌈L / 212⌉ frame bodies. Photo layers are ordered coarse → fine;</text>
+  <text class="d" x="840" y="368" text-anchor="middle">each layer renders once its bytes form a complete, in-order prefix.</text>
+</svg>
